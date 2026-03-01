@@ -379,51 +379,100 @@ async def smart_reply(message: Message, state: FSMContext):
         return  # Не мешаем текущему диалогу
     
     # Приветствия
-    greetings = ["привет", "здравствуй", "хай", "hello", "добрый", "доброе", "добрый день"]
+    greetings = ["привет", "здравствуй", "хай", "hello", "добрый", "доброе", "добрый день", "здравствуйте"]
     if any(word in text_lower for word in greetings):
         await message.answer(
             "👋 Привет! Я бот погоды.\n"
-            "Напиши 'погода' и название города, например: 'погода Москва'\n"
-            "Или используй /weather"
+            "Напиши 'погода' и название города, например: `погода Москва`\n"
+            "Или используй /weather",
+            parse_mode="Markdown"
         )
         return
     
-    # Запрос погоды - ищем разные паттерны
-    weather_patterns = [
-        r'погода\s+в\s+(\w+)',           # "погода в москве"
-        r'погода\s+(\w+)',                # "погода москва"
-        r'(\w+)\s+погода',                 # "москва погода"
-        r'погода'                          # просто "погода"
-    ]
-    
+    # Запрос погоды
     if "погода" in text_lower:
         city_found = None
         
-        # Пробуем извлечь город по разным паттернам
-        for pattern in weather_patterns:
-            match = re.search(pattern, text_lower)
+        # Паттерн 1: "погода в Москве"
+        match = re.search(r'погода\s+в\s+(\w+)', text_lower)
+        if match:
+            city_found = match.group(1)
+        
+        # Паттерн 2: "погода Москва" (самый частый случай)
+        if not city_found:
+            match = re.search(r'погода\s+(\w+)', text_lower)
             if match:
-                if len(match.groups()) > 0:
-                    city_found = match.group(1).capitalize()
-                break
+                city_found = match.group(1)
         
-        if city_found:
-            # Сразу показываем текущую погоду для найденного города
-            await message.answer(f"🔍 Ищу погоду для *{city_found}*...", parse_mode="Markdown")
-            weather = await get_current_weather(city_found)
-            if weather:
-                await message.answer(weather, parse_mode="Markdown")
-                return
-            else:
-                await message.answer(f"❌ Не удалось найти город *{city_found}*. Попробуй уточнить.", parse_mode="Markdown")
-                # Переходим к ручному вводу города
-                await state.set_state(WeatherStates.waiting_for_city)
-                return
+        # Паттерн 3: "Москва погода"
+        if not city_found:
+            match = re.search(r'(\w+)\s+погода', text_lower)
+            if match:
+                city_found = match.group(1)
         
-        # Если город не извлекли, спрашиваем
-        await message.answer("🌍 Напиши название города (например, `Москва`):", parse_mode="Markdown")
-        await state.set_state(WeatherStates.waiting_for_city)
+        # Паттерн 4: просто "погода" (без города)
+        if not city_found:
+            await message.answer("🌍 Напиши название города (например, `Москва`):", parse_mode="Markdown")
+            await state.set_state(WeatherStates.waiting_for_city)
+            return
+        
+        # 🔥 ВОТ ЗДЕСЬ ИСПОЛЬЗУЕМ ФУНКЦИЮ ОЧИСТКИ 🔥
+        city_clean = clean_city_name(city_found)
+        
+        logging.info(f"🔍 Извлечен город: '{city_found}' -> очищенный: '{city_clean}'")
+        
+        # Показываем погоду
+        await message.answer(f"🔍 Получаю погоду для *{city_clean}*...", parse_mode="Markdown")
+        weather = await get_current_weather(city_clean)
+        
+        if weather:
+            await message.answer(weather, parse_mode="Markdown")
+        else:
+            # Если не получилось с очищенным, пробуем исходный
+            await message.answer(f"❌ Не удалось найти город *{city_clean}*. Проверь название.", parse_mode="Markdown")
+            
+            # Предлагаем ввести город вручную
+            await message.answer("🌍 Напиши название города правильно:", parse_mode="Markdown")
+            await state.set_state(WeatherStates.waiting_for_city)
+        
         return
+
+
+def clean_city_name(city: str) -> str:
+    """Очищает название города от падежных окончаний"""
+    # Словарь частых замен
+    replacements = {
+        'москве': 'Москва',
+        'москва': 'Москва',
+        'питере': 'Санкт-Петербург',
+        'спб': 'Санкт-Петербург',
+        'петербурге': 'Санкт-Петербург',
+        'ленинграде': 'Санкт-Петербург',
+        'ленинград': 'Санкт-Петербург',
+        'киев': 'Киев',
+        'киеве': 'Киев',
+        'минск': 'Минск',
+        'минске': 'Минск',
+        'лондон': 'London',
+        'лондоне': 'London',
+        'париж': 'Paris',
+        'париже': 'Paris',
+        'берлин': 'Berlin',
+        'берлине': 'Berlin',
+        'рим': 'Rome',
+        'риме': 'Rome',
+    }
+    
+    city_lower = city.lower()
+    if city_lower in replacements:
+        return replacements[city_lower]
+    
+    # Если город заканчивается на 'е', 'а', 'у' - базовая очистка
+    if city_lower.endswith('е'):
+        # Пробуем убрать последнюю букву
+        return city[:-1]
+    
+    return city
 
 # ================== ОБРАБОТЧИК ВСЕГО ОСТАЛЬНОГО ==================
 @dp.message()
@@ -501,6 +550,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
