@@ -85,42 +85,65 @@ async def get_weather_forecast(city: str, days: int) -> str:
         if forecast_data.get("cod") != "200":
             return None
         
-        daily_forecasts = {}
+        # Группируем прогнозы по дням
+        daily_data = {}
         today = datetime.now().date()
         
         for item in forecast_data["list"]:
             date = datetime.fromtimestamp(item["dt"]).date()
+            
+            # Пропускаем сегодняшний день
             if date == today:
                 continue
-            
-            if date not in daily_forecasts and len(daily_forecasts) < days:
-                daily_forecasts[date] = {
-                    "temp_min": item["main"]["temp_min"],
-                    "temp_max": item["main"]["temp_max"],
-                    "description": item["weather"][0]["description"],
-                    "humidity": item["main"]["humidity"],
-                    "wind": item["wind"]["speed"]
+                
+            if date not in daily_data:
+                daily_data[date] = {
+                    "temps": [],  # Собираем все температуры за день
+                    "descriptions": [],
+                    "humidity": [],
+                    "wind": []
                 }
+            
+            # Сохраняем температуру из этого 3-часового интервала
+            daily_data[date]["temps"].append(item["main"]["temp"])
+            daily_data[date]["descriptions"].append(item["weather"][0]["description"])
+            daily_data[date]["humidity"].append(item["main"]["humidity"])
+            daily_data[date]["wind"].append(item["wind"]["speed"])
         
-        if not daily_forecasts:
+        if not daily_data:
             return f"🌍 *Прогноз для {city_name}*\n\nНа ближайшие дни прогноз отсутствует."
         
+        # Формируем прогноз по дням
         forecast_text = f"🌍 *Прогноз погоды для {city_name} на {days} дн.*\n\n"
         days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
         
-        for date in sorted(daily_forecasts.keys())[:days]:
-            day = daily_forecasts[date]
+        # Берем только запрошенное количество дней
+        for i, (date, data) in enumerate(sorted(daily_data.items())[:days]):
+            # Вычисляем реальные min и max из всех измерений за день
+            temps = data["temps"]
+            temp_min = min(temps)
+            temp_max = max(temps)
+            
+            # Усредняем остальные показатели
+            avg_temp = sum(temps) / len(temps)
+            avg_humidity = sum(data["humidity"]) / len(data["humidity"])
+            avg_wind = sum(data["wind"]) / len(data["wind"])
+            
+            # Берем самое частое описание погоды
+            description = max(set(data["descriptions"]), key=data["descriptions"].count).capitalize()
+            
             date_str = date.strftime("%d.%m")
             day_name = days_ru[date.weekday()]
             
             forecast_text += (
                 f"📅 *{date_str} ({day_name})*\n"
-                f"🌡 {day['temp_min']:.0f}…{day['temp_max']:.0f}°C\n"
-                f"☁️ {day['description'].capitalize()}\n"
-                f"💧 Влажность: {day['humidity']}%, 🌬 Ветер: {day['wind']:.1f} м/с\n\n"
+                f"🌡 {temp_min:.0f}…{temp_max:.0f}°C (ср. {avg_temp:.1f}°C)\n"
+                f"☁️ {description}\n"
+                f"💧 Влажность: {avg_humidity:.0f}%, 🌬 Ветер: {avg_wind:.1f} м/с\n\n"
             )
         
         return forecast_text
+        
     except Exception as e:
         logging.error(f"Ошибка прогноза: {e}")
         return None
@@ -695,6 +718,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
