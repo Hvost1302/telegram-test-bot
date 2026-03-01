@@ -138,7 +138,7 @@ async def get_current_weather(city: str) -> str:
         
         # ========== ВАЖНО: ПОЛУЧАЕМ ФАЗУ ЛУНЫ ==========
         logging.info("🌙 [get_current_weather] Вызываем get_moon_phase()")
-        moon_phase = await get_moon_phase()
+        moon_phase = await get_moon_phase_calculated()
         logging.info(f"🌙 [get_current_weather] Результат get_moon_phase(): {moon_phase}")
         # ==============================================
         
@@ -1207,6 +1207,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
