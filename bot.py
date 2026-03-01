@@ -20,14 +20,11 @@ WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 WEBHOOK_PATH = "/webhook"
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 
-# ⚠️ ВАЖНО: Если RENDER_EXTERNAL_URL не задан (например, при локальном запуске),
-# используем заглушку. На продакшене Render должен добавлять эту переменную автоматически.
 if not RENDER_URL:
-    logging.error("❌ RENDER_EXTERNAL_URL не задан! Webhook не будет работать.")
-    # Можно также задать вручную, но лучше настроить в Render:
-    # RENDER_URL = "https://your-app.onrender.com"
+    RENDER_URL = "https://your-app.onrender.com"  # ЗАМЕНИТЕ НА ВАШ URL
+    logging.warning(f"⚠️ Использую запасной URL: {RENDER_URL}")
 
-WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH if RENDER_URL else None
+WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH
 
 if not BOT_TOKEN or not WEATHER_API_KEY:
     raise ValueError("❌ Токены не заданы в переменных окружения!")
@@ -47,7 +44,7 @@ async def get_current_weather(city: str) -> str:
     """Получает текущую погоду"""
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
-        response = requests.get(url)
+        response = requests.get(url, timeout=10)
         data = response.json()
         
         if data.get("cod") != 200:
@@ -68,9 +65,8 @@ async def get_current_weather(city: str) -> str:
 async def get_weather_forecast(city: str, days: int) -> str:
     """Получает прогноз на указанное количество дней"""
     try:
-        # Получаем координаты города
         geo_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
-        geo_response = requests.get(geo_url)
+        geo_response = requests.get(geo_url, timeout=10)
         geo_data = geo_response.json()
         
         if geo_data.get("cod") != 200:
@@ -80,15 +76,13 @@ async def get_weather_forecast(city: str, days: int) -> str:
         lon = geo_data["coord"]["lon"]
         city_name = geo_data["name"]
         
-        # Запрашиваем прогноз
         forecast_url = f"http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
-        forecast_response = requests.get(forecast_url)
+        forecast_response = requests.get(forecast_url, timeout=10)
         forecast_data = forecast_response.json()
         
         if forecast_data.get("cod") != "200":
             return None
         
-        # Группируем по дням
         daily_forecasts = {}
         today = datetime.now().date()
         
@@ -109,7 +103,6 @@ async def get_weather_forecast(city: str, days: int) -> str:
         if not daily_forecasts:
             return f"🌍 *Прогноз для {city_name}*\n\nНа ближайшие дни прогноз отсутствует."
         
-        # Формируем ответ
         forecast_text = f"🌍 *Прогноз погоды для {city_name} на {days} дн.*\n\n"
         days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
         
@@ -126,14 +119,12 @@ async def get_weather_forecast(city: str, days: int) -> str:
             )
         
         return forecast_text
-        
     except Exception as e:
         logging.error(f"Ошибка прогноза: {e}")
         return None
 
 # ================== КЛАВИАТУРЫ ==================
 def get_days_keyboard():
-    """Клавиатура для выбора количества дней"""
     buttons = [
         [
             InlineKeyboardButton(text="1 день", callback_data="days_1"),
@@ -149,7 +140,6 @@ def get_days_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def get_start_keyboard():
-    """Красивая клавиатура для /start"""
     buttons = [
         [InlineKeyboardButton(text="🌤 Узнать погоду", callback_data="start_weather")],
         [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="start_help")],
@@ -160,7 +150,6 @@ def get_start_keyboard():
 # ================== ОБРАБОТЧИКИ КОМАНД ==================
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    """Приветствие с красивыми inline-кнопками"""
     await message.answer(
         "👋 *Привет! Я бот с прогнозом погоды*\n\n"
         "🔍 Нажми кнопку ниже, чтобы узнать погоду в любом городе мира!\n"
@@ -171,7 +160,6 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
-    """Справка в Markdown"""
     await message.answer(
         "📋 *Доступные команды:*\n\n"
         "🔹 `/start` — приветствие\n"
@@ -187,28 +175,24 @@ async def cmd_help(message: Message):
 
 @dp.message(Command("weather"))
 async def cmd_weather(message: Message, state: FSMContext):
-    """Начало запроса погоды"""
     await message.answer("🌍 Напиши название города (например, `Москва`, `Лондон`, `Токио`):", parse_mode="Markdown")
     await state.set_state(WeatherStates.waiting_for_city)
 
 # ================== ОБРАБОТЧИКИ CALLBACK ==================
 @dp.callback_query(lambda c: c.data == "start_weather")
 async def callback_start_weather(callback: CallbackQuery, state: FSMContext):
-    """Обработка кнопки «Узнать погоду»"""
     await callback.message.answer("🌍 Напиши название города (например, `Москва`):", parse_mode="Markdown")
     await state.set_state(WeatherStates.waiting_for_city)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "start_help")
 async def callback_start_help(callback: CallbackQuery):
-    """Обработка кнопки «Помощь»"""
     await cmd_help(callback.message)
     await callback.answer()
 
 # ================== ОБРАБОТЧИКИ СОСТОЯНИЙ ==================
 @dp.message(WeatherStates.waiting_for_city)
 async def process_city(message: Message, state: FSMContext):
-    """Обработка введённого города"""
     city = message.text.strip()
     await state.update_data(city=city)
     
@@ -221,7 +205,6 @@ async def process_city(message: Message, state: FSMContext):
 
 @dp.callback_query(WeatherStates.waiting_for_days)
 async def process_days_callback(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора дней через кнопки"""
     action = callback.data
     
     if action == "days_cancel":
@@ -258,7 +241,6 @@ async def process_days_callback(callback: CallbackQuery, state: FSMContext):
 
 @dp.message(WeatherStates.waiting_for_days)
 async def process_days_text(message: Message, state: FSMContext):
-    """Обработка ручного ввода числа дней"""
     if message.text.isdigit():
         days = int(message.text)
         if 1 <= days <= 5:
@@ -293,24 +275,20 @@ async def process_days_text(message: Message, state: FSMContext):
 # ================== ОБРАБОТЧИК ВСЕГО ОСТАЛЬНОГО ==================
 @dp.message()
 async def handle_other_messages(message: Message):
-    """Ответ на неизвестные сообщения"""
     await message.answer(
         "Я не понимаю эту команду.\n"
         "Используй `/weather` чтобы узнать погоду.",
         parse_mode="Markdown"
     )
 
-# ================== WEBHOOK ==================
-async def on_startup(app: web.Application):
-    """Действия при запуске (теперь с параметром app)"""
-    if not WEBHOOK_URL:
-        logging.error("❌ WEBHOOK_URL не задан, пропускаю установку webhook")
-        return
-        
-    logging.info(f"🔄 Устанавливаю webhook на {WEBHOOK_URL}")
+# ================== ГЛАВНАЯ ФУНКЦИЯ ==================
+async def init_webhook():
+    """Отдельная функция для инициализации webhook"""
+    logging.info("🔄 Инициализация webhook...")
     
-    # Удаляем старый webhook и сбрасываем ожидающие обновления
+    # Удаляем старый webhook
     await bot.delete_webhook(drop_pending_updates=True)
+    logging.info("✅ Старый webhook удалён")
     
     # Устанавливаем новый
     success = await bot.set_webhook(
@@ -326,43 +304,47 @@ async def on_startup(app: web.Application):
     else:
         logging.error("❌ Не удалось установить webhook")
 
-async def on_shutdown(app: web.Application):
-    """Действия при остановке (теперь с параметром app)"""
+async def cleanup():
+    """Очистка при остановке"""
     logging.info("🔄 Останавливаю бота...")
     await bot.delete_webhook()
     await bot.session.close()
     logging.info("✅ Бот остановлен")
 
-# ================== ЗАПУСК ==================
-def main():
-    """Главная функция запуска"""
+async def handle_root(request):
+    """Обработчик для проверки работы"""
+    return web.Response(text="Bot is running! Webhook is active.")
+
+async def main():
+    """Создание и настройка приложения"""
     app = web.Application()
     
-    # Настраиваем обработчик webhook
+    # Добавляем обработчик для проверки
+    app.router.add_get('/', handle_root)
+    app.router.add_get('/health', handle_root)
+    
+    # Настраиваем webhook
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     
-    # Регистрируем обработчики жизненного цикла приложения
-    app.on_startup.append(on_startup)
-    app.on_shutdown.append(on_shutdown)
-    
-    port = int(os.getenv("PORT", "10000"))  # Render ожидает порт 10000
-    logging.info(f"🚀 Запуск сервера на порту {port}")
-    
-    # Добавляем простой обработчик для корневого пути (для проверки)
-    async def health_check(request):
-        return web.Response(text="Bot is running!")
-    app.router.add_get('/', health_check)
-    app.router.add_get('/health', health_check)
+    # ЯВНО вызываем инициализацию webhook перед запуском сервера
+    await init_webhook()
     
     return app
 
 # ================== ТОЧКА ВХОДА ==================
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", "10000"))
+    logging.info(f"🚀 Запуск сервера на порту {port}")
+    
+    # Запускаем приложение
     try:
-        web.run_app(main(), host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
+        web.run_app(main(), host="0.0.0.0", port=port)
     except KeyboardInterrupt:
+        asyncio.run(cleanup())
         logging.info("Бот остановлен пользователем")
+    finally:
+        logging.info("Завершение работы")
