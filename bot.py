@@ -37,6 +37,7 @@ dp = Dispatcher(storage=storage)
 # ================== СОСТОЯНИЯ FSM ==================
 class WeatherStates(StatesGroup):
     waiting_for_city = State()
+    waiting_for_type = State()      # Новое состояние: выбор типа
     waiting_for_days = State()
 
 # ================== ФУНКЦИИ ПОГОДЫ ==================
@@ -124,7 +125,26 @@ async def get_weather_forecast(city: str, days: int) -> str:
         return None
 
 # ================== КЛАВИАТУРЫ ==================
+def get_start_keyboard():
+    """Красивая клавиатура для /start"""
+    buttons = [
+        [InlineKeyboardButton(text="🌤 Узнать погоду", callback_data="start_weather")],
+        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="start_help")],
+        [InlineKeyboardButton(text="📢 Поделиться", switch_inline_query="бот погоды")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_weather_type_keyboard():
+    """Клавиатура для выбора типа прогноза"""
+    buttons = [
+        [InlineKeyboardButton(text="🌤 Текущая погода", callback_data="type_current")],
+        [InlineKeyboardButton(text="📅 Прогноз на дни", callback_data="type_forecast")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="type_cancel")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
 def get_days_keyboard():
+    """Клавиатура для выбора количества дней"""
     buttons = [
         [
             InlineKeyboardButton(text="1 день", callback_data="days_1"),
@@ -136,14 +156,6 @@ def get_days_keyboard():
             InlineKeyboardButton(text="5 дней", callback_data="days_5"),
             InlineKeyboardButton(text="❌ Отмена", callback_data="days_cancel")
         ]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-def get_start_keyboard():
-    buttons = [
-        [InlineKeyboardButton(text="🌤 Узнать погоду", callback_data="start_weather")],
-        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="start_help")],
-        [InlineKeyboardButton(text="📢 Поделиться", switch_inline_query="бот погоды")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -193,9 +205,53 @@ async def cmd_weather(message: Message, state: FSMContext):
     await message.answer("🌍 Напиши название города (например, `Москва`, `Лондон`, `Токио`):", parse_mode="Markdown")
     await state.set_state(WeatherStates.waiting_for_city)
 
+# ================== ОБРАБОТЧИК ВЫБОРА ТИПА ==================
+
+@dp.callback_query(WeatherStates.waiting_for_type)
+async def process_type_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора типа прогноза"""
+    action = callback.data
+    data = await state.get_data()
+    city = data.get("city")
+    
+    if action == "type_cancel":
+        await callback.message.edit_text("❌ Запрос отменён.")
+        await state.clear()
+        await callback.answer()
+        return
+    
+    if action == "type_current":
+        # Показываем текущую погоду
+        await callback.message.edit_text(f"🔍 Получаю текущую погоду для *{city}*...", parse_mode="Markdown")
+        
+        current = await get_current_weather(city)
+        
+        if current:
+            await callback.message.answer(current, parse_mode="Markdown")
+        else:
+            await callback.message.answer(
+                "❌ Не удалось получить погоду. Проверь название города.",
+                parse_mode="Markdown"
+            )
+        
+        await state.clear()
+        await callback.answer()
+        return
+    
+    if action == "type_forecast":
+        # Переходим к выбору дней
+        await callback.message.edit_text(
+            f"📍 Город: *{city}*\n\nВыбери количество дней:",
+            parse_mode="Markdown",
+            reply_markup=get_days_keyboard()
+        )
+        await state.set_state(WeatherStates.waiting_for_days)
+        await callback.answer()
+
 # ================== ОБРАБОТЧИКИ CALLBACK ==================
 @dp.callback_query(lambda c: c.data == "start_weather")
 async def callback_start_weather(callback: CallbackQuery, state: FSMContext):
+    """Обработка кнопки «Узнать погоду»"""
     await callback.message.answer("🌍 Напиши название города (например, `Москва`):", parse_mode="Markdown")
     await state.set_state(WeatherStates.waiting_for_city)
     await callback.answer()
@@ -225,6 +281,19 @@ async def callback_share_bot(callback: CallbackQuery):
 # ================== ОБРАБОТЧИКИ СОСТОЯНИЙ ==================
 @dp.message(WeatherStates.waiting_for_city)
 async def process_city(message: Message, state: FSMContext):
+    """Обработка введённого города"""
+    city = message.text.strip()
+    await state.update_data(city=city)
+    
+    await message.answer(
+        f"📍 Город: *{city}*\n\nЧто показать?",
+        parse_mode="Markdown",
+        reply_markup=get_weather_type_keyboard()
+    )
+    await state.set_state(WeatherStates.waiting_for_type)
+
+@dp.message(WeatherStates.waiting_for_city)
+async def process_city(message: Message, state: FSMContext):
     city = message.text.strip()
     await state.update_data(city=city)
     
@@ -237,6 +306,7 @@ async def process_city(message: Message, state: FSMContext):
 
 @dp.callback_query(WeatherStates.waiting_for_days)
 async def process_days_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора дней через кнопки"""
     action = callback.data
     
     if action == "days_cancel":
@@ -256,6 +326,7 @@ async def process_days_callback(callback: CallbackQuery, state: FSMContext):
     if forecast:
         await callback.message.answer(forecast, parse_mode="Markdown")
     else:
+        # Если прогноз не работает, пробуем текущую погоду
         current = await get_current_weather(city)
         if current:
             await callback.message.answer(
@@ -380,5 +451,6 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
