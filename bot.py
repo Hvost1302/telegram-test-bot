@@ -45,13 +45,17 @@ class WeatherStates(StatesGroup):
 async def get_current_weather(city: str) -> str:
     """Получает текущую погоду с восходом/закатом и фазой луны"""
     try:
+        logging.info(f"🌤 [get_current_weather] Запрос погоды для города: {city}")
+        
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
         response = requests.get(url, timeout=10)
         data = response.json()
         
         if data.get("cod") != 200:
-            logging.error(f"Ошибка API: {data}")
+            logging.error(f"❌ Ошибка API OpenWeatherMap: {data}")
             return None
+        
+        logging.info(f"✅ [get_current_weather] Данные получены для {data['name']}")
         
         # Получаем координаты для UV
         lat = data['coord']['lat']
@@ -60,8 +64,11 @@ async def get_current_weather(city: str) -> str:
         # Получаем UV-индекс
         uv_data = await get_uv_index(lat, lon)
         
-        # Получаем фазу луны (через отдельный API)
+        # ========== ВАЖНО: ПОЛУЧАЕМ ФАЗУ ЛУНЫ ==========
+        logging.info("🌙 [get_current_weather] Вызываем get_moon_phase()")
         moon_phase = await get_moon_phase()
+        logging.info(f"🌙 [get_current_weather] Результат get_moon_phase(): {moon_phase}")
+        # ==============================================
         
         # Параметры ветра
         wind_deg = data.get("wind", {}).get("deg", 0)
@@ -94,9 +101,12 @@ async def get_current_weather(city: str) -> str:
             f"🌇 Закат: {sunset_time}\n"
         )
         
-        # Добавляем фазу луны
+        # Добавляем фазу луны (ТОЛЬКО если она не None)
         if moon_phase:
             weather_text += f"{moon_phase}\n"
+            logging.info(f"✅ Фаза луны добавлена в ответ: {moon_phase}")
+        else:
+            logging.warning("⚠️ Фаза луны не получена, пропускаем")
         
         weather_text += "\n"
         
@@ -113,10 +123,13 @@ async def get_current_weather(city: str) -> str:
         
         weather_text += f"👔 *Совет по одежде:*\n{clothing_advice}"
         
+        logging.info("✅ [get_current_weather] Сообщение сформировано успешно")
         return weather_text
         
     except Exception as e:
-        logging.error(f"Ошибка в get_current_weather: {e}")
+        logging.error(f"❌ Ошибка в get_current_weather: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 async def get_weather_forecast(city: str, days: int) -> str:
@@ -316,58 +329,63 @@ async def get_moon_phase(date=None):
         if date is None:
             date = datetime.now().strftime("%Y-%m-%d")
         
-        # Используем бесплатный API fajr (не требует ключа)
-        url = f"http://api.aladhan.com/v1/gToH/{date}"
+        logging.info(f"🌙 [get_moon_phase] Запрос фазы луны на {date}")
         
-        logging.info(f"🌙 Запрос фазы луны на {date}")
+        # Используем бесплатный API aladhan.com (не требует ключа)
+        url = f"http://api.aladhan.com/v1/gToH/{date}"
+        logging.info(f"🌙 [get_moon_phase] URL: {url}")
+        
         response = requests.get(url, timeout=10)
+        logging.info(f"🌙 [get_moon_phase] Статус ответа: {response.status_code}")
         
         if response.status_code != 200:
-            logging.error(f"🌙 Ошибка HTTP: {response.status_code}")
+            logging.error(f"🌙 [get_moon_phase] Ошибка HTTP: {response.status_code}")
             return None
         
         data = response.json()
+        logging.info(f"🌙 [get_moon_phase] Получен ответ, ключи: {list(data.keys()) if data else 'None'}")
         
-        if not data.get('data'):
+        if not data or not data.get('data'):
+            logging.error("🌙 [get_moon_phase] Нет данных в ответе")
             return None
         
         # Получаем день лунного месяца
-        lunar_day = int(data['data']['hijri']['day'])
+        hijri_data = data['data'].get('hijri', {})
+        lunar_day = int(hijri_data.get('day', 0))
+        lunar_month = hijri_data.get('month', {}).get('en', '')
+        
+        logging.info(f"🌙 [get_moon_phase] Лунный день: {lunar_day}, месяц: {lunar_month}")
         
         # Определяем фазу луны по дню лунного месяца
         if lunar_day <= 1:
-            return "🌑 Новолуние"
+            moon_phase = "🌑 Новолуние"
         elif lunar_day <= 6:
-            return "🌒 Растущий серп"
+            moon_phase = "🌒 Растущий серп"
         elif lunar_day <= 8:
-            return "🌓 Первая четверть"
+            moon_phase = "🌓 Первая четверть"
         elif lunar_day <= 13:
-            return "🌔 Растущая луна"
+            moon_phase = "🌔 Растущая луна"
         elif lunar_day <= 15:
-            return "🌕 Полнолуние"
+            moon_phase = "🌕 Полнолуние"
         elif lunar_day <= 20:
-            return "🌖 Убывающая луна"
+            moon_phase = "🌖 Убывающая луна"
         elif lunar_day <= 22:
-            return "🌗 Последняя четверть"
+            moon_phase = "🌗 Последняя четверть"
         elif lunar_day <= 28:
-            return "🌘 Убывающий серп"
+            moon_phase = "🌘 Убывающий серп"
         else:
-            return "🌑 Новолуние"
+            moon_phase = "🌑 Новолуние"
+        
+        logging.info(f"🌙 [get_moon_phase] Определена фаза: {moon_phase}")
+        return moon_phase
             
+    except requests.exceptions.RequestException as e:
+        logging.error(f"🌙 [get_moon_phase] Ошибка запроса: {e}")
+        return None
     except Exception as e:
-        logging.error(f"🌙 Ошибка получения фазы луны: {e}")
-        return None
-
-async def get_moon_times(city: str = None):
-    """
-    Получает время восхода и захода луны (если доступно)
-    """
-    try:
-        # Используем бесплатный API для времени луны
-        url = "https://api.astronomyapi.com/api/v2/bodies/positions"
-        # Этот API требует ключ, поэтому пока упростим
-        return None
-    except:
+        logging.error(f"🌙 [get_moon_phase] Неизвестная ошибка: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 async def get_uv_index(lat: float, lon: float) -> dict:
@@ -626,8 +644,8 @@ def get_clothing_advice(temp, weather_desc, wind_speed):
 
 def format_unix_time(timestamp: int, timezone_offset: int = 0) -> str:
     """
-    Форматирует UNIX timestamp в читаемое время с учетом часового пояса [citation:4]
-    OpenWeatherMap возвращает время в UTC [citation:1]
+    Форматирует UNIX timestamp в читаемое время с учетом часового пояса
+    OpenWeatherMap возвращает время в UTC 
     """
     from datetime import timezone, timedelta
     
@@ -1208,6 +1226,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
