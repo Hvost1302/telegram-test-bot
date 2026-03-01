@@ -189,7 +189,7 @@ async def get_water_temperature(city: str) -> float:
     Получает температуру воды для прибрежных городов
     Возвращает температуру в °C или None, если данные недоступны
     """
-    # Координаты популярных курортов Крыма
+    # Координаты популярных курортов Крыма (ключи на кириллице)
     crimean_beaches = {
         'севастополь': {'lat': 44.6, 'lon': 33.53},
         'симферополь': None,  # Не на море
@@ -202,15 +202,37 @@ async def get_water_temperature(city: str) -> float:
         'керчь': {'lat': 45.36, 'lon': 36.48},
     }
     
-    city_lower = city.lower()
+    # Транслитерация с латиницы на кириллицу для ключей словаря
+    translit_map = {
+        'yalta': 'ялта',
+        'y alta': 'ялта',
+        'yalta': 'ялта',
+        'sevastopol': 'севастополь',
+        'sevastopol': 'севастополь',
+        'simferopol': 'симферополь',
+        'alushta': 'алушта',
+        'evpatoria': 'евпатория',
+        'feodosia': 'феодосия',
+        'sudak': 'судак',
+        'saki': 'саки',
+        'kerch': 'керчь',
+    }
+    
+    city_lower = city.lower().strip()
     logging.info(f"🌊 [get_water_temp] Проверка города: '{city_lower}'")
     
-    # Проверяем, есть ли город в списке
-    if city_lower not in crimean_beaches:
-        logging.info(f"🌊 [get_water_temp] Город '{city_lower}' не в списке приморских")
+    # Проверяем, может быть город уже на кириллице
+    if city_lower in crimean_beaches:
+        coords = crimean_beaches[city_lower]
+    # Если нет, пробуем транслитерацию
+    elif city_lower in translit_map:
+        russian_name = translit_map[city_lower]
+        logging.info(f"🌊 [get_water_temp] Транслитерация: '{city_lower}' -> '{russian_name}'")
+        coords = crimean_beaches.get(russian_name)
+    else:
+        logging.info(f"🌊 [get_water_temp] Город '{city_lower}' не найден в списке приморских")
         return None
     
-    coords = crimean_beaches[city_lower]
     if not coords:
         logging.info(f"🌊 [get_water_temp] Город '{city_lower}' не на море")
         return None
@@ -221,21 +243,19 @@ async def get_water_temperature(city: str) -> float:
     WWO_KEY = os.getenv("WWO_API_KEY")
     if not WWO_KEY:
         logging.error("🌊 [get_water_temp] ❌ WWO_API_KEY не найден в переменных окружения!")
-        logging.error(f"🌊 [get_water_temp] Все переменные: {list(os.environ.keys())}")
         return None
     
     logging.info(f"🌊 [get_water_temp] Ключ найден: {WWO_KEY[:5]}...{WWO_KEY[-5:]}")
     
     try:
-        # ПРАВИЛЬНЫЙ URL и параметры для Marine API
-        url = "https://api.worldweatheronline.com/premium/v1/marine.ashx"  # Обратите внимание: https!
+        url = "https://api.worldweatheronline.com/premium/v1/marine.ashx"
         
         params = {
             'key': WWO_KEY,
             'q': f"{coords['lat']},{coords['lon']}",
             'format': 'json',
-            'tp': '24',  # 24 часа - суточные данные
-            'lang': 'ru'  # Добавим русский язык
+            'tp': '24',
+            'lang': 'ru'
         }
         
         logging.info(f"🌊 [get_water_temp] Отправляю запрос к: {url}")
@@ -251,56 +271,18 @@ async def get_water_temperature(city: str) -> float:
             return None
         
         data = response.json()
-        logging.info(f"🌊 [get_water_temp] Получен JSON, ключи: {list(data.keys())}")
         
-        # Проверяем структуру ответа
-        if 'data' not in data:
-            logging.error(f"🌊 [get_water_temp] ❌ Нет поля 'data' в ответе")
-            logging.error(f"🌊 [get_water_temp] Полный ответ: {data}")
+        if 'data' not in data or 'weather' not in data['data']:
+            logging.error(f"🌊 [get_water_temp] ❌ Неожиданный формат ответа")
             return None
         
-        if 'weather' not in data['data']:
-            logging.error(f"🌊 [get_water_temp] ❌ Нет поля 'weather' в data")
-            return None
-        
-        if not data['data']['weather']:
-            logging.error(f"🌊 [get_water_temp] ❌ Пустой список weather")
-            return None
-        
-        # Парсим температуру воды
-        weather_list = data['data']['weather']
-        first_day = weather_list[0]
-        
-        if 'hourly' not in first_day:
-            logging.error(f"🌊 [get_water_temp] ❌ Нет поля 'hourly' в первом дне")
-            return None
-        
-        hourly = first_day['hourly'][0]
-        
-        if 'waterTemp_C' not in hourly:
-            logging.error(f"🌊 [get_water_temp] ❌ Нет поля waterTemp_C")
-            logging.error(f"🌊 [get_water_temp] Доступные поля: {list(hourly.keys())}")
-            return None
-        
-        water_temp = float(hourly['waterTemp_C'])
+        water_temp = data['data']['weather'][0]['hourly'][0]['waterTemp_C']
         logging.info(f"🌊 [get_water_temp] ✅ Температура воды: {water_temp}°C")
         
-        return water_temp
+        return float(water_temp)
         
-    except requests.exceptions.Timeout:
-        logging.error("🌊 [get_water_temp] ❌ Таймаут запроса")
-        return None
-    except requests.exceptions.ConnectionError as e:
-        logging.error(f"🌊 [get_water_temp] ❌ Ошибка соединения: {e}")
-        return None
-    except requests.exceptions.RequestException as e:
-        logging.error(f"🌊 [get_water_temp] ❌ Ошибка запроса: {e}")
-        return None
-    except ValueError as e:  # JSON decode error
-        logging.error(f"🌊 [get_water_temp] ❌ Ошибка парсинга JSON: {e}")
-        return None
     except Exception as e:
-        logging.error(f"🌊 [get_water_temp] ❌ Неизвестная ошибка: {e}")
+        logging.error(f"🌊 [get_water_temp] ❌ Ошибка: {e}")
         import traceback
         traceback.print_exc()
         return None
@@ -941,3 +923,4 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
