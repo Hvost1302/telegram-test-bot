@@ -53,12 +53,19 @@ async def get_current_weather(city: str) -> str:
             logging.error(f"Ошибка API: {data}")
             return None
         
+        # Получаем направление ветра
+        wind_deg = data.get("wind", {}).get("deg", 0)
+        wind_dir = wind_direction_to_text(wind_deg)
+        wind_arrow = wind_direction_to_arrow(wind_deg)
+        wind_speed = data["wind"]["speed"]
+        
         return (
             f"🌤 *Текущая погода в {data['name']}*\n\n"
             f"🌡 Температура: {data['main']['temp']:.1f}°C (ощущается как {data['main']['feels_like']:.1f}°C)\n"
             f"📝 Описание: {data['weather'][0]['description'].capitalize()}\n"
             f"💧 Влажность: {data['main']['humidity']}%\n"
-            f"🌬 Ветер: {data['wind']['speed']} м/с"
+            f"🌬 Ветер: {wind_speed} м/с, {wind_arrow} {wind_dir}\n"
+            f"📊 Давление: {data['main']['pressure']} гПа"
         )
     except Exception as e:
         logging.error(f"Ошибка: {e}")
@@ -92,44 +99,45 @@ async def get_weather_forecast(city: str, days: int) -> str:
         for item in forecast_data["list"]:
             date = datetime.fromtimestamp(item["dt"]).date()
             
-            # Пропускаем сегодняшний день
             if date == today:
                 continue
                 
             if date not in daily_data:
                 daily_data[date] = {
-                    "temps": [],  # Собираем все температуры за день
+                    "temps": [],
                     "descriptions": [],
                     "humidity": [],
-                    "wind": []
+                    "wind_speed": [],
+                    "wind_deg": []  # Добавляем направление ветра
                 }
             
-            # Сохраняем температуру из этого 3-часового интервала
             daily_data[date]["temps"].append(item["main"]["temp"])
             daily_data[date]["descriptions"].append(item["weather"][0]["description"])
             daily_data[date]["humidity"].append(item["main"]["humidity"])
-            daily_data[date]["wind"].append(item["wind"]["speed"])
+            daily_data[date]["wind_speed"].append(item["wind"]["speed"])
+            daily_data[date]["wind_deg"].append(item["wind"].get("deg", 0))
         
         if not daily_data:
             return f"🌍 *Прогноз для {city_name}*\n\nНа ближайшие дни прогноз отсутствует."
         
-        # Формируем прогноз по дням
+        # Формируем прогноз
         forecast_text = f"🌍 *Прогноз погоды для {city_name} на {days} дн.*\n\n"
         days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
         
-        # Берем только запрошенное количество дней
         for i, (date, data) in enumerate(sorted(daily_data.items())[:days]):
-            # Вычисляем реальные min и max из всех измерений за день
             temps = data["temps"]
             temp_min = min(temps)
             temp_max = max(temps)
-            
-            # Усредняем остальные показатели
             avg_temp = sum(temps) / len(temps)
-            avg_humidity = sum(data["humidity"]) / len(data["humidity"])
-            avg_wind = sum(data["wind"]) / len(data["wind"])
             
-            # Берем самое частое описание погоды
+            avg_humidity = sum(data["humidity"]) / len(data["humidity"])
+            avg_wind_speed = sum(data["wind_speed"]) / len(data["wind_speed"])
+            
+            # Для направления ветра берем среднее (с учетом круговой природы)
+            avg_wind_deg = sum(data["wind_deg"]) / len(data["wind_deg"])
+            wind_dir = wind_direction_to_text(avg_wind_deg)
+            wind_arrow = wind_direction_to_arrow(avg_wind_deg)
+            
             description = max(set(data["descriptions"]), key=data["descriptions"].count).capitalize()
             
             date_str = date.strftime("%d.%m")
@@ -139,7 +147,8 @@ async def get_weather_forecast(city: str, days: int) -> str:
                 f"📅 *{date_str} ({day_name})*\n"
                 f"🌡 {temp_min:.0f}…{temp_max:.0f}°C (ср. {avg_temp:.1f}°C)\n"
                 f"☁️ {description}\n"
-                f"💧 Влажность: {avg_humidity:.0f}%, 🌬 Ветер: {avg_wind:.1f} м/с\n\n"
+                f"💧 Влажность: {avg_humidity:.0f}%\n"
+                f"🌬 Ветер: {avg_wind_speed:.1f} м/с, {wind_arrow} {wind_dir}\n\n"
             )
         
         return forecast_text
@@ -147,6 +156,31 @@ async def get_weather_forecast(city: str, days: int) -> str:
     except Exception as e:
         logging.error(f"Ошибка прогноза: {e}")
         return None
+
+# ================== ФУНКЦИЯ ДЛЯ ПРЕОБРАЗОВАНИЯ ГРАДУСОВ В НАПРАВЛЕНИЕ ВЕТРА ==================
+
+def wind_direction_to_text(degrees: float) -> str:
+    """
+    Преобразует направление ветра в градусах в текстовое описание
+    """
+    directions = [
+        "северный", "северо-восточный", "восточный", "юго-восточный",
+        "южный", "юго-западный", "западный", "северо-западный"
+    ]
+    
+    # Преобразуем градусы в индекс массива (0-7)
+    # Каждые 45 градусов - новое направление
+    index = round(degrees / 45) % 8
+    
+    return directions[index]
+
+def wind_direction_to_arrow(degrees: float) -> str:
+    """
+    Возвращает стрелку для визуализации направления ветра
+    """
+    arrows = ["⬆️", "↗️", "➡️", "↘️", "⬇️", "↙️", "⬅️", "↖️"]
+    index = round(degrees / 45) % 8
+    return arrows[index]
 
 # ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
 
@@ -718,6 +752,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
