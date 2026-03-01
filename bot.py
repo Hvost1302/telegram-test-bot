@@ -59,13 +59,19 @@ async def get_current_weather(city: str) -> str:
         wind_arrow = wind_direction_to_arrow(wind_deg)
         wind_speed = data["wind"]["speed"]
         
+        # Получаем совет по одежде
+        weather_desc = data['weather'][0]['description']
+        temp = data['main']['temp']
+        clothing_advice = get_clothing_advice(temp, weather_desc, wind_speed)
+        
         return (
             f"🌤 *Текущая погода в {data['name']}*\n\n"
-            f"🌡 Температура: {data['main']['temp']:.1f}°C (ощущается как {data['main']['feels_like']:.1f}°C)\n"
-            f"📝 Описание: {data['weather'][0]['description'].capitalize()}\n"
+            f"🌡 Температура: {temp:.1f}°C (ощущается как {data['main']['feels_like']:.1f}°C)\n"
+            f"📝 Описание: {weather_desc.capitalize()}\n"
             f"💧 Влажность: {data['main']['humidity']}%\n"
             f"🌬 Ветер: {wind_speed} м/с, {wind_arrow} {wind_dir}\n"
-            f"📊 Давление: {data['main']['pressure']} гПа"
+            f"📊 Давление: {data['main']['pressure']} гПа\n\n"
+            f"👔 *Совет по одежде:*\n{clothing_advice}"
         )
     except Exception as e:
         logging.error(f"Ошибка: {e}")
@@ -132,35 +138,39 @@ async def get_weather_forecast(city: str, days: int) -> str:
             temp_min = min(temps)
             temp_max = max(temps)
             avg_temp = sum(temps) / len(temps)
-            
+    
             avg_humidity = sum(data["humidity"]) / len(data["humidity"])
             avg_wind_speed = sum(data["wind_speed"]) / len(data["wind_speed"])
             avg_wind_deg = sum(data["wind_deg"]) / len(data["wind_deg"])
-            
+    
             # Направление ветра
             wind_dir = wind_direction_to_text(avg_wind_deg)
             wind_arrow = wind_direction_to_arrow(avg_wind_deg)
-            
+    
             # Описание погоды
             description = max(set(data["descriptions"]), key=data["descriptions"].count).capitalize()
-            
+    
             # Вероятность осадков (средняя за день)
             avg_pop = sum(data["pop"]) / len(data["pop"]) * 100
-            
+    
+            # Совет по одежде (используем среднюю температуру)
+            clothing_advice = get_clothing_advice(avg_temp, description.lower(), avg_wind_speed)
+    
             date_str = date.strftime("%d.%m")
             day_name = days_ru[date.weekday()]
-            
+    
             forecast_text += f"📅 *{date_str} ({day_name})*\n"
             forecast_text += f"🌡 {temp_min:.0f}…{temp_max:.0f}°C (ср. {avg_temp:.1f}°C)\n"
             forecast_text += f"☁️ {description}\n"
             forecast_text += f"💧 Влажность: {avg_humidity:.0f}%\n"
             forecast_text += f"🌬 Ветер: {avg_wind_speed:.1f} м/с {wind_arrow} {wind_dir}\n"
-            
-            # Показываем вероятность осадков, только если она значимая (>10%)
-            if avg_pop > 10:
-                forecast_text += f"🌧 Вероятность осадков: {avg_pop:.0f}%\n"
-            
-            forecast_text += "\n"
+    
+    # Показываем вероятность осадков, только если она значимая (>10%)
+    if avg_pop > 10:
+        forecast_text += f"🌧 Вероятность осадков: {avg_pop:.0f}%\n"
+    
+    # Добавляем совет по одежде (компактно)
+    forecast_text += f"👔 {clothing_advice.split(chr(10))[0]}\n\n"  # берем только первую строку совета
         
         return forecast_text
         
@@ -196,22 +206,40 @@ def wind_direction_to_arrow(degrees: float) -> str:
 # ================== СОВЕТЫ ПО ОДЕЖДЕ ==================
 
 def get_clothing_advice(temp, weather_desc, wind_speed):
+    """Дает рекомендации по одежде на основе погоды"""
     advice = []
-    if temp < -10:
-        advice.append("🥶 Очень холодно! Надевай пуховик, шапку и шарф")
-    elif temp < 0:
-        advice.append("🧥 Холодно. Куртка и теплая обувь обязательны")
-    elif temp < 10:
-        advice.append("🧥 Прохладно. Легкая куртка или свитер")
-    elif temp < 20:
-        advice.append("👕 Свитер или ветровка будет в самый раз")
-    else:
-        advice.append("👕 Тепло! Футболка и шорты 👍")
     
+    # Температурные рекомендации
+    if temp < -20:
+        advice.append("🥶 Экстремально холодно! Арктический пуховик, термобелье, две шапки!")
+    elif temp < -10:
+        advice.append("🥶 Очень холодно! Пуховик, шапка, шарф, перчатки обязательны")
+    elif temp < 0:
+        advice.append("🧥 Холодно. Зимняя куртка, теплая обувь, шапка")
+    elif temp < 10:
+        advice.append("🧥 Прохладно. Осенняя куртка или пальто, можно шапку")
+    elif temp < 15:
+        advice.append("🧥 Свежо. Ветровка или свитер, джинсы")
+    elif temp < 20:
+        advice.append("👕 Комфортно. Легкая кофта или ветровка")
+    elif temp < 25:
+        advice.append("👕 Тепло. Футболка, шорты/джинсы, кеды")
+    else:
+        advice.append("👕 Жарко! Майка, шорты, головной убор, вода с собой")
+    
+    # Осадки
     if "дождь" in weather_desc.lower():
-        advice.append("☔️ Возьми зонтик!")
-    if wind_speed > 10:
-        advice.append("💨 Сильный ветер, застегнись")
+        advice.append("☔️ Обязательно возьми зонтик!")
+    elif "снег" in weather_desc.lower():
+        advice.append("❄️ Идет снег - надень непромокаемую обувь")
+    
+    # Ветер
+    if wind_speed > 15:
+        advice.append("💨 Ураганный ветер! Прячь лицо и застегивайся наглухо")
+    elif wind_speed > 10:
+        advice.append("💨 Сильный ветер - застегни куртку, ветровка пригодится")
+    elif wind_speed > 5:
+        advice.append("🍃 Легкий ветерок, но может продувать - имей это в виду")
     
     return "\n".join(advice)
 
@@ -786,6 +814,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
