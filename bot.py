@@ -43,6 +43,77 @@ class WeatherStates(StatesGroup):
     waiting_for_days = State()
 
 # ================== ФУНКЦИИ ПОГОДЫ ==================
+
+def get_moon_phase_name(moon_phase_value: float) -> str:
+    """
+    Преобразует числовое значение фазы луны (0-1) в текстовое описание и эмодзи
+    Значения из OpenWeatherMap: 0 - новолуние, 0.25 - первая четверть, 
+    0.5 - полнолуние, 0.75 - последняя четверть [citation:2][citation:6]
+    """
+    if moon_phase_value == 0 or moon_phase_value == 1:
+        return "🌑 Новолуние"
+    elif moon_phase_value == 0.25:
+        return "🌓 Первая четверть"
+    elif moon_phase_value == 0.5:
+        return "🌕 Полнолуние"
+    elif moon_phase_value == 0.75:
+        return "🌗 Последняя четверть"
+    elif 0 < moon_phase_value < 0.25:
+        return "🌒 Растущий серп"
+    elif 0.25 < moon_phase_value < 0.5:
+        return "🌔 Растущая луна"
+    elif 0.5 < moon_phase_value < 0.75:
+        return "🌖 Убывающая луна"
+    elif 0.75 < moon_phase_value < 1:
+        return "🌘 Убывающий серп"
+    else:
+        return "🌙 Луна"
+
+
+async def get_moon_phase_calculated(date=None):
+    """
+    Рассчитывает фазу луны астрономическим методом (без API)
+    """
+    try:
+        if date is None:
+            date = datetime.now()
+        
+        # Создаем наблюдателя в Гринвиче
+        observer = ephem.Observer()
+        observer.date = date.strftime('%Y/%m/%d')
+        
+        # Получаем луну
+        moon = ephem.Moon()
+        moon.compute(observer)
+        
+        # ephem.moon_phase возвращает фазу от 0 до 1
+        # 0 - новолуние, 0.5 - полнолуние
+        phase = moon.moon_phase
+        
+        logging.info(f"🌙 [расчетная] Фаза луны: {phase:.3f}")
+        
+        if phase < 0.03 or phase > 0.97:
+            return "🌑 Новолуние"
+        elif phase < 0.22:
+            return "🌒 Растущий серп"
+        elif phase < 0.28:
+            return "🌓 Первая четверть"
+        elif phase < 0.47:
+            return "🌔 Растущая луна"
+        elif phase < 0.53:
+            return "🌕 Полнолуние"
+        elif phase < 0.72:
+            return "🌖 Убывающая луна"
+        elif phase < 0.78:
+            return "🌗 Последняя четверть"
+        else:
+            return "🌘 Убывающий серп"
+            
+    except Exception as e:
+        logging.error(f"🌙 [расчетная] Ошибка: {e}")
+        return None
+
+
 async def get_current_weather(city: str) -> str:
     """Получает текущую погоду с восходом/закатом и фазой луны"""
     try:
@@ -321,48 +392,7 @@ async def get_weather_forecast_fallback(city: str, days: int) -> str:
     pass
 
 
-async def get_moon_phase_calculated(date=None):
-    """
-    Рассчитывает фазу луны астрономическим методом (без API)
-    """
-    try:
-        if date is None:
-            date = datetime.now()
-        
-        # Создаем наблюдателя в Гринвиче
-        observer = ephem.Observer()
-        observer.date = date.strftime('%Y/%m/%d')
-        
-        # Получаем луну
-        moon = ephem.Moon()
-        moon.compute(observer)
-        
-        # ephem.moon_phase возвращает фазу от 0 до 1
-        # 0 - новолуние, 0.5 - полнолуние
-        phase = moon.moon_phase
-        
-        logging.info(f"🌙 [расчетная] Фаза луны: {phase:.3f}")
-        
-        if phase < 0.03 or phase > 0.97:
-            return "🌑 Новолуние"
-        elif phase < 0.22:
-            return "🌒 Растущий серп"
-        elif phase < 0.28:
-            return "🌓 Первая четверть"
-        elif phase < 0.47:
-            return "🌔 Растущая луна"
-        elif phase < 0.53:
-            return "🌕 Полнолуние"
-        elif phase < 0.72:
-            return "🌖 Убывающая луна"
-        elif phase < 0.78:
-            return "🌗 Последняя четверть"
-        else:
-            return "🌘 Убывающий серп"
-            
-    except Exception as e:
-        logging.error(f"🌙 [расчетная] Ошибка: {e}")
-        return None
+
 async def get_uv_index(lat: float, lon: float) -> dict:
     """
     Получает UV-индекс по координатам
@@ -418,30 +448,6 @@ async def get_uv_index(lat: float, lon: float) -> dict:
         logging.error(f"☀️ [UV] Ошибка: {e}")
         return None
 
-def get_moon_phase_name(moon_phase_value: float) -> str:
-    """
-    Преобразует числовое значение фазы луны (0-1) в текстовое описание и эмодзи
-    Значения из OpenWeatherMap: 0 - новолуние, 0.25 - первая четверть, 
-    0.5 - полнолуние, 0.75 - последняя четверть [citation:2][citation:6]
-    """
-    if moon_phase_value == 0 or moon_phase_value == 1:
-        return "🌑 Новолуние"
-    elif moon_phase_value == 0.25:
-        return "🌓 Первая четверть"
-    elif moon_phase_value == 0.5:
-        return "🌕 Полнолуние"
-    elif moon_phase_value == 0.75:
-        return "🌗 Последняя четверть"
-    elif 0 < moon_phase_value < 0.25:
-        return "🌒 Растущий серп"
-    elif 0.25 < moon_phase_value < 0.5:
-        return "🌔 Растущая луна"
-    elif 0.5 < moon_phase_value < 0.75:
-        return "🌖 Убывающая луна"
-    elif 0.75 < moon_phase_value < 1:
-        return "🌘 Убывающий серп"
-    else:
-        return "🌙 Луна"
 
 
 # ================== ФУНКЦИЯ ДЛЯ ОПРЕДЕЛЕНИЯ ТЕМПЕРАТУРЫ ВОДЫ ==================
@@ -1201,6 +1207,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
