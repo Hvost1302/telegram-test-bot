@@ -1,18 +1,8 @@
-async def main():
-    # ПРИНУДИТЕЛЬНАЯ УСТАНОВКА WEBHOOK
-    print("🔄 Принудительная установка webhook...")
-    await bot.delete_webhook()
-    success = await bot.set_webhook(WEBHOOK_URL)
-    print(f"✅ Webhook установлен: {success}, URL: {WEBHOOK_URL}")
-    
-    app = web.Application()
-    # ... остальной код
-
 import asyncio
 import logging
 import os
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -22,31 +12,30 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 
-# Настройка логирования
+# ================== НАСТРОЙКА ==================
 logging.basicConfig(level=logging.INFO)
 
-# Токены из переменных окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL") + WEBHOOK_PATH
 
 if not BOT_TOKEN or not WEATHER_API_KEY:
-    raise ValueError("Токены не заданы в переменных окружения!")
+    raise ValueError("❌ Токены не заданы в переменных окружения!")
 
-# Создаем объекты бота
+# ================== ИНИЦИАЛИЗАЦИЯ ==================
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# СОСТОЯНИЯ ДЛЯ FSM
+# ================== СОСТОЯНИЯ FSM ==================
 class WeatherStates(StatesGroup):
     waiting_for_city = State()
-    waiting_for_days = State()  # Новое состояние для выбора дней
+    waiting_for_days = State()
 
-# Функция получения ТЕКУЩЕЙ погоды (оставляем для совместимости)
+# ================== ФУНКЦИИ ПОГОДЫ ==================
 async def get_current_weather(city: str) -> str:
-    """Получает текущую погоду для указанного города"""
+    """Получает текущую погоду"""
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
         response = requests.get(url)
@@ -56,33 +45,21 @@ async def get_current_weather(city: str) -> str:
             logging.error(f"Ошибка API: {data}")
             return None
         
-        city_name = data["name"]
-        temp = data["main"]["temp"]
-        feels_like = data["main"]["feels_like"]
-        description = data["weather"][0]["description"].capitalize()
-        humidity = data["main"]["humidity"]
-        wind_speed = data["wind"]["speed"]
-        
-        weather_text = (
-            f"🌤 <b>Текущая погода в {city_name}</b>\n\n"
-            f"🌡 Температура: {temp:.1f}°C (ощущается как {feels_like:.1f}°C)\n"
-            f"📝 Описание: {description}\n"
-            f"💧 Влажность: {humidity}%\n"
-            f"🌬 Ветер: {wind_speed} м/с"
+        return (
+            f"🌤 *Текущая погода в {data['name']}*\n\n"
+            f"🌡 Температура: {data['main']['temp']:.1f}°C (ощущается как {data['main']['feels_like']:.1f}°C)\n"
+            f"📝 Описание: {data['weather'][0]['description'].capitalize()}\n"
+            f"💧 Влажность: {data['main']['humidity']}%\n"
+            f"🌬 Ветер: {data['wind']['speed']} м/с"
         )
-        return weather_text
     except Exception as e:
-        logging.error(f"Ошибка при запросе погоды: {e}")
+        logging.error(f"Ошибка: {e}")
         return None
 
-# НОВАЯ ФУНКЦИЯ: Получение ПРОГНОЗА на несколько дней
 async def get_weather_forecast(city: str, days: int) -> str:
-    """
-    Получает прогноз погоды на указанное количество дней (1-5)
-    Использует API 5 day / 3 hour forecast [citation:1]
-    """
+    """Получает прогноз на указанное количество дней"""
     try:
-        # Сначала получаем координаты города через current weather
+        # Получаем координаты города
         geo_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
         geo_response = requests.get(geo_url)
         geo_data = geo_response.json()
@@ -90,91 +67,64 @@ async def get_weather_forecast(city: str, days: int) -> str:
         if geo_data.get("cod") != 200:
             return None
         
-        # Получаем координаты
         lat = geo_data["coord"]["lat"]
         lon = geo_data["coord"]["lon"]
         city_name = geo_data["name"]
         
-        # Запрашиваем 5-дневный прогноз (3-часовые интервалы) [citation:1]
+        # Запрашиваем прогноз
         forecast_url = f"http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
         forecast_response = requests.get(forecast_url)
         forecast_data = forecast_response.json()
         
         if forecast_data.get("cod") != "200":
-            logging.error(f"Ошибка прогноза: {forecast_data}")
             return None
         
-        # Группируем прогнозы по дням
+        # Группируем по дням
         daily_forecasts = {}
+        today = datetime.now().date()
         
         for item in forecast_data["list"]:
-            # Преобразуем timestamp в дату
             date = datetime.fromtimestamp(item["dt"]).date()
-            
-            # Пропускаем сегодняшний день (чтобы не смешивать с текущей погодой)
-            if date == datetime.now().date():
+            if date == today:
                 continue
             
-            # Ограничиваем количество дней
-            if len(daily_forecasts) >= days:
-                break
-            
-            if date not in daily_forecasts:
+            if date not in daily_forecasts and len(daily_forecasts) < days:
                 daily_forecasts[date] = {
-                    "temps": [],
-                    "descriptions": [],
-                    "humidity": [],
-                    "wind_speed": []
+                    "temp_min": item["main"]["temp_min"],
+                    "temp_max": item["main"]["temp_max"],
+                    "description": item["weather"][0]["description"],
+                    "humidity": item["main"]["humidity"],
+                    "wind": item["wind"]["speed"]
                 }
-            
-            # Собираем данные для этого дня
-            daily_forecasts[date]["temps"].append(item["main"]["temp"])
-            daily_forecasts[date]["descriptions"].append(item["weather"][0]["description"])
-            daily_forecasts[date]["humidity"].append(item["main"]["humidity"])
-            daily_forecasts[date]["wind_speed"].append(item["wind"]["speed"])
         
-        # Формируем прогноз по дням
         if not daily_forecasts:
-            return f"🌍 <b>Прогноз для {city_name}</b>\n\nНа ближайшие дни прогноз отсутствует."
+            return f"🌍 *Прогноз для {city_name}*\n\nНа ближайшие дни прогноз отсутствует."
         
-        forecast_text = f"🌍 <b>Прогноз погоды для {city_name} на {days} дн.</b>\n\n"
+        # Формируем ответ
+        forecast_text = f"🌍 *Прогноз погоды для {city_name} на {days} дн.*\n\n"
+        days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
         
-        # Сортируем дни
         for date in sorted(daily_forecasts.keys())[:days]:
-            day_data = daily_forecasts[date]
-            
-            # Вычисляем средние/максимальные/минимальные значения
-            avg_temp = sum(day_data["temps"]) / len(day_data["temps"])
-            max_temp = max(day_data["temps"])
-            min_temp = min(day_data["temps"])
-            
-            # Самое частое описание погоды
-            description = max(set(day_data["descriptions"]), key=day_data["descriptions"].count)
-            description = description.capitalize()
-            
-            # Средние влажность и ветер
-            avg_humidity = sum(day_data["humidity"]) / len(day_data["humidity"])
-            avg_wind = sum(day_data["wind_speed"]) / len(day_data["wind_speed"])
-            
-            # Форматируем дату
+            day = daily_forecasts[date]
             date_str = date.strftime("%d.%m")
-            day_name = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][date.weekday()]
+            day_name = days_ru[date.weekday()]
             
             forecast_text += (
-                f"📅 <b>{date_str} ({day_name})</b>\n"
-                f"🌡 {min_temp:.0f}…{max_temp:.0f}°C (ср. {avg_temp:.1f}°C)\n"
-                f"☁️ {description}\n"
-                f"💧 Влажность: {avg_humidity:.0f}%, 🌬 Ветер: {avg_wind:.1f} м/с\n\n"
+                f"📅 *{date_str} ({day_name})*\n"
+                f"🌡 {day['temp_min']:.0f}…{day['temp_max']:.0f}°C\n"
+                f"☁️ {day['description'].capitalize()}\n"
+                f"💧 Влажность: {day['humidity']}%, 🌬 Ветер: {day['wind']:.1f} м/с\n\n"
             )
         
         return forecast_text
         
     except Exception as e:
-        logging.error(f"Ошибка при запросе прогноза: {e}")
+        logging.error(f"Ошибка прогноза: {e}")
         return None
 
-# Функция создания клавиатуры для выбора дней
+# ================== КЛАВИАТУРЫ ==================
 def get_days_keyboard():
+    """Клавиатура для выбора количества дней"""
     buttons = [
         [
             InlineKeyboardButton(text="1 день", callback_data="days_1"),
@@ -189,51 +139,80 @@ def get_days_keyboard():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# Обработчик /start
+def get_start_keyboard():
+    """Красивая клавиатура для /start"""
+    buttons = [
+        [InlineKeyboardButton(text="🌤 Узнать погоду", callback_data="start_weather")],
+        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="start_help")],
+        [InlineKeyboardButton(text="📢 Поделиться", switch_inline_query="бот погоды")]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+# ================== ОБРАБОТЧИКИ КОМАНД ==================
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    """Приветствие с красивыми inline-кнопками"""
     await message.answer(
-        "👋 Привет! Я бот с прогнозом погоды.\n\n"
-        "🔍 `/weather` - Узнать погоду (текущую или на несколько дней)\n"
-        "ℹ️ `/help` - Справка",
-        parse_mode="Markdown"  # Меняем режим на Markdown
+        "👋 *Привет! Я бот с прогнозом погоды*\n\n"
+        "🔍 Нажми кнопку ниже, чтобы узнать погоду в любом городе мира!\n"
+        "📅 Прогноз доступен на 1–5 дней.",
+        parse_mode="Markdown",
+        reply_markup=get_start_keyboard()
     )
 
-# Обработчик /help
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
+    """Справка в Markdown"""
     await message.answer(
-        "Доступные команды:\n"
-        "/start - Приветствие\n"
-        "/help - Эта подсказка\n"
-        "/weather - Узнать погоду (с выбором дней)"
+        "📋 *Доступные команды:*\n\n"
+        "🔹 `/start` — приветствие\n"
+        "🔹 `/help` — эта подсказка\n"
+        "🔹 `/weather` — узнать погоду\n\n"
+        "🌤 *Как пользоваться:*\n"
+        "1. Нажми `/weather` или кнопку «Узнать погоду»\n"
+        "2. Введи название города (например, `Москва`)\n"
+        "3. Выбери количество дней (1–5)\n\n"
+        "_Пример: /weather → Москва → 3 дня_",
+        parse_mode="Markdown"
     )
 
-# Обработчик /weather - вход в FSM
 @dp.message(Command("weather"))
 async def cmd_weather(message: Message, state: FSMContext):
-    await message.answer("🌍 Напишите название города:")
+    """Начало запроса погоды"""
+    await message.answer("🌍 Напиши название города (например, `Москва`, `Лондон`, `Токио`):", parse_mode="Markdown")
     await state.set_state(WeatherStates.waiting_for_city)
 
-# Обработчик ввода города
+# ================== ОБРАБОТЧИКИ CALLBACK ==================
+@dp.callback_query(lambda c: c.data == "start_weather")
+async def callback_start_weather(callback: CallbackQuery, state: FSMContext):
+    """Обработка кнопки «Узнать погоду»"""
+    await callback.message.answer("🌍 Напиши название города (например, `Москва`):", parse_mode="Markdown")
+    await state.set_state(WeatherStates.waiting_for_city)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "start_help")
+async def callback_start_help(callback: CallbackQuery):
+    """Обработка кнопки «Помощь»"""
+    await cmd_help(callback.message)
+    await callback.answer()
+
+# ================== ОБРАБОТЧИКИ СОСТОЯНИЙ ==================
 @dp.message(WeatherStates.waiting_for_city)
 async def process_city(message: Message, state: FSMContext):
+    """Обработка введённого города"""
     city = message.text.strip()
-    
-    # Сохраняем город в состоянии
     await state.update_data(city=city)
     
-    # Спрашиваем, на сколько дней нужен прогноз
     await message.answer(
-        f"📍 Город: {city}\n\n"
-        f"Выберите период прогноза:",
+        f"📍 Город: *{city}*\n\nВыбери период прогноза:",
+        parse_mode="Markdown",
         reply_markup=get_days_keyboard()
     )
     await state.set_state(WeatherStates.waiting_for_days)
 
-# Обработчик выбора количества дней (инлайн-кнопки)
 @dp.callback_query(WeatherStates.waiting_for_days)
-async def process_days_selection(callback: CallbackQuery, state: FSMContext):
+async def process_days_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора дней через кнопки"""
     action = callback.data
     
     if action == "days_cancel":
@@ -242,103 +221,114 @@ async def process_days_selection(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
     
-    # Получаем количество дней из callback_data
     days = int(action.split("_")[1])
-    
-    # Получаем сохраненный город
     data = await state.get_data()
     city = data.get("city")
     
-    await callback.message.edit_text(f"🔍 Получаю прогноз на {days} дн. для города {city}...")
+    await callback.message.edit_text(f"🔍 Получаю прогноз на *{days}* дн. для *{city}*...", parse_mode="Markdown")
     
-    # Получаем прогноз
     forecast = await get_weather_forecast(city, days)
     
     if forecast:
-        await callback.message.answer(forecast, parse_mode="HTML")
+        await callback.message.answer(forecast, parse_mode="Markdown")
     else:
-        # Если прогноз не получился, пробуем хотя бы текущую погоду
         current = await get_current_weather(city)
         if current:
             await callback.message.answer(
-                f"⚠️ Не удалось получить прогноз на {days} дней, но вот текущая погода:\n\n{current}",
-                parse_mode="HTML"
+                f"⚠️ Не удалось получить прогноз, но вот текущая погода:\n\n{current}",
+                parse_mode="Markdown"
             )
         else:
             await callback.message.answer(
-                "❌ Не удалось найти город. Проверьте название и попробуйте снова.\n"
-                "Используйте /weather для нового запроса."
+                "❌ Город не найден. Проверь название и попробуй `/weather` снова.",
+                parse_mode="Markdown"
             )
     
     await state.clear()
     await callback.answer()
 
-# Обработчик для старых версий (если кто-то просто ввел город без выбора дней)
 @dp.message(WeatherStates.waiting_for_days)
 async def process_days_text(message: Message, state: FSMContext):
-    # Если пользователь ввел число
+    """Обработка ручного ввода числа дней"""
     if message.text.isdigit():
         days = int(message.text)
         if 1 <= days <= 5:
             data = await state.get_data()
             city = data.get("city")
             
-            await message.answer(f"🔍 Получаю прогноз на {days} дн. для города {city}...")
+            await message.answer(f"🔍 Получаю прогноз на *{days}* дн. для *{city}*...", parse_mode="Markdown")
             
             forecast = await get_weather_forecast(city, days)
             
             if forecast:
-                await message.answer(forecast, parse_mode="HTML")
+                await message.answer(forecast, parse_mode="Markdown")
             else:
                 current = await get_current_weather(city)
                 if current:
                     await message.answer(
                         f"⚠️ Вот текущая погода вместо прогноза:\n\n{current}",
-                        parse_mode="HTML"
+                        parse_mode="Markdown"
                     )
                 else:
-                    await message.answer("❌ Не удалось получить данные о погоде.")
+                    await message.answer(
+                        "❌ Не удалось получить данные о погоде. Попробуй позже.",
+                        parse_mode="Markdown"
+                    )
             
             await state.clear()
         else:
-            await message.answer("❌ Введите число от 1 до 5 или выберите на клавиатуре.")
+            await message.answer("❌ Введи число от 1 до 5 или выбери на клавиатуре.")
     else:
-        await message.answer("Пожалуйста, выберите количество дней на клавиатуре или введите число от 1 до 5.")
+        await message.answer("Пожалуйста, выбери количество дней на клавиатуре или введи число от 1 до 5.")
 
-# Обработчик всех остальных сообщений
+# ================== ОБРАБОТЧИК ВСЕГО ОСТАЛЬНОГО ==================
 @dp.message()
 async def handle_other_messages(message: Message):
+    """Ответ на неизвестные сообщения"""
     await message.answer(
         "Я не понимаю эту команду.\n"
-        "Используйте /weather чтобы узнать погоду."
+        "Используй `/weather` чтобы узнать погоду.",
+        parse_mode="Markdown"
     )
 
-# Настройка webhook
+# ================== WEBHOOK ==================
 async def on_startup():
-    await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook установлен на {WEBHOOK_URL}")
+    """Действия при запуске"""
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(
+        url=WEBHOOK_URL,
+        allowed_updates=["message", "callback_query"],
+        max_connections=40
+    )
+    bot_info = await bot.get_me()
+    logging.info(f"Бот @{bot_info.username} запущен, webhook установлен на {WEBHOOK_URL}")
 
 async def on_shutdown():
+    """Действия при остановке"""
     await bot.delete_webhook()
-    logging.info("Webhook удален")
+    logging.info("Бот остановлен, webhook удалён")
 
 async def main():
+    """Главная функция запуска"""
     app = web.Application()
+    
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    
     app.on_startup.append(lambda _: on_startup())
     app.on_shutdown.append(lambda _: on_shutdown())
+    
     port = int(os.getenv("PORT", "8000"))
-    logging.info(f"Запуск сервера на порту {port}")
+    logging.info(f"🚀 Запуск сервера на порту {port}")
+    
     return app
 
+# ================== ТОЧКА ВХОДА ==================
 if __name__ == "__main__":
     try:
         web.run_app(main(), host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
     except KeyboardInterrupt:
-        logging.info("Бот остановлен")
-
-
+        logging.info("Бот остановлен пользователем")
