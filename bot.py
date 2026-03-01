@@ -18,7 +18,16 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL") + WEBHOOK_PATH
+RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+
+# ⚠️ ВАЖНО: Если RENDER_EXTERNAL_URL не задан (например, при локальном запуске),
+# используем заглушку. На продакшене Render должен добавлять эту переменную автоматически.
+if not RENDER_URL:
+    logging.error("❌ RENDER_EXTERNAL_URL не задан! Webhook не будет работать.")
+    # Можно также задать вручную, но лучше настроить в Render:
+    # RENDER_URL = "https://your-app.onrender.com"
+
+WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH if RENDER_URL else None
 
 if not BOT_TOKEN or not WEATHER_API_KEY:
     raise ValueError("❌ Токены не заданы в переменных окружения!")
@@ -292,43 +301,68 @@ async def handle_other_messages(message: Message):
     )
 
 # ================== WEBHOOK ==================
-async def on_startup():
-    """Действия при запуске"""
+async def on_startup(app: web.Application):
+    """Действия при запуске (теперь с параметром app)"""
+    if not WEBHOOK_URL:
+        logging.error("❌ WEBHOOK_URL не задан, пропускаю установку webhook")
+        return
+        
+    logging.info(f"🔄 Устанавливаю webhook на {WEBHOOK_URL}")
+    
+    # Удаляем старый webhook и сбрасываем ожидающие обновления
     await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(
+    
+    # Устанавливаем новый
+    success = await bot.set_webhook(
         url=WEBHOOK_URL,
         allowed_updates=["message", "callback_query"],
         max_connections=40
     )
-    bot_info = await bot.get_me()
-    logging.info(f"Бот @{bot_info.username} запущен, webhook установлен на {WEBHOOK_URL}")
+    
+    if success:
+        bot_info = await bot.get_me()
+        logging.info(f"✅ Webhook установлен для @{bot_info.username}")
+        logging.info(f"📎 URL: {WEBHOOK_URL}")
+    else:
+        logging.error("❌ Не удалось установить webhook")
 
-async def on_shutdown():
-    """Действия при остановке"""
+async def on_shutdown(app: web.Application):
+    """Действия при остановке (теперь с параметром app)"""
+    logging.info("🔄 Останавливаю бота...")
     await bot.delete_webhook()
-    logging.info("Бот остановлен, webhook удалён")
+    await bot.session.close()
+    logging.info("✅ Бот остановлен")
 
-async def main():
+# ================== ЗАПУСК ==================
+def main():
     """Главная функция запуска"""
     app = web.Application()
     
+    # Настраиваем обработчик webhook
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
     )
     webhook_requests_handler.register(app, path=WEBHOOK_PATH)
     
-    app.on_startup.append(lambda _: on_startup())
-    app.on_shutdown.append(lambda _: on_shutdown())
+    # Регистрируем обработчики жизненного цикла приложения
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
     
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "10000"))  # Render ожидает порт 10000
     logging.info(f"🚀 Запуск сервера на порту {port}")
+    
+    # Добавляем простой обработчик для корневого пути (для проверки)
+    async def health_check(request):
+        return web.Response(text="Bot is running!")
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
     
     return app
 
 # ================== ТОЧКА ВХОДА ==================
 if __name__ == "__main__":
     try:
-        web.run_app(main(), host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
+        web.run_app(main(), host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
     except KeyboardInterrupt:
         logging.info("Бот остановлен пользователем")
