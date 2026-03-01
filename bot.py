@@ -207,9 +207,66 @@ def get_clothing_advice(temp, weather_desc, wind_speed):
 
 # ================== ВЕРОЯТНОСТЬ ОСАДКОВ ==================
 
-pop = item.get("pop", 0)  # probability of precipitation
-if pop > 0:
-    forecast_text += f"🌧 Вероятность дождя: {pop * 100:.0f}%\n"
+# В функции get_weather_forecast, внутри цикла for item in forecast_data["list"]:
+for item in forecast_data["list"]:
+    date = datetime.fromtimestamp(item["dt"]).date()
+    
+    if date == today:
+        continue
+        
+    if date not in daily_data:
+        daily_data[date] = {
+            "temps": [],
+            "descriptions": [],
+            "humidity": [],
+            "wind_speed": [],
+            "wind_deg": [],
+            "pop": []  # Добавляем массив для вероятности осадков
+        }
+    
+    daily_data[date]["temps"].append(item["main"]["temp"])
+    daily_data[date]["descriptions"].append(item["weather"][0]["description"])
+    daily_data[date]["humidity"].append(item["main"]["humidity"])
+    daily_data[date]["wind_speed"].append(item["wind"]["speed"])
+    daily_data[date]["wind_deg"].append(item["wind"].get("deg", 0))
+    
+    # ✅ ПРАВИЛЬНО: pop внутри цикла, где item определен
+    pop = item.get("pop", 0)  # вероятность осадков (0-1)
+    daily_data[date]["pop"].append(pop)
+
+# При формировании текста прогноза
+avg_pop = sum(data["pop"]) / len(data["pop"]) * 100  # переводим в проценты
+if avg_pop > 10:  # показываем, только если есть значимая вероятность
+    forecast_text += f"🌧 Вероятность дождя: {avg_pop:.0f}%\n"
+
+# Группируем прогнозы по дням
+daily_data = {}
+today = datetime.now().date()
+
+for item in forecast_data["list"]:
+    date = datetime.fromtimestamp(item["dt"]).date()
+    
+    if date == today:
+        continue
+        
+    if date not in daily_data:
+        daily_data[date] = {
+            "temps": [],
+            "descriptions": [],
+            "humidity": [],
+            "wind_speed": [],
+            "wind_deg": [],
+            "pop": []  # ← ДОБАВЛЯЕМ ЭТУ СТРОКУ
+        }
+    
+    daily_data[date]["temps"].append(item["main"]["temp"])
+    daily_data[date]["descriptions"].append(item["weather"][0]["description"])
+    daily_data[date]["humidity"].append(item["main"]["humidity"])
+    daily_data[date]["wind_speed"].append(item["wind"]["speed"])
+    daily_data[date]["wind_deg"].append(item["wind"].get("deg", 0))
+    
+    # ← ЭТУ СТРОКУ ТОЖЕ ДОБАВЛЯЕМ (ВНУТРИ ЦИКЛА!)
+    daily_data[date]["pop"].append(item.get("pop", 0))
 
 # ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
 
@@ -781,6 +838,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
