@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import requests
+import re
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -292,18 +293,6 @@ async def process_city(message: Message, state: FSMContext):
     )
     await state.set_state(WeatherStates.waiting_for_type)
 
-@dp.message(WeatherStates.waiting_for_city)
-async def process_city(message: Message, state: FSMContext):
-    city = message.text.strip()
-    await state.update_data(city=city)
-    
-    await message.answer(
-        f"📍 Город: *{city}*\n\nВыбери период прогноза:",
-        parse_mode="Markdown",
-        reply_markup=get_days_keyboard()
-    )
-    await state.set_state(WeatherStates.waiting_for_days)
-
 @dp.callback_query(WeatherStates.waiting_for_days)
 async def process_days_callback(callback: CallbackQuery, state: FSMContext):
     """Обработка выбора дней через кнопки"""
@@ -384,29 +373,55 @@ async def process_days_text(message: Message, state: FSMContext):
 async def smart_reply(message: Message, state: FSMContext):
     text_lower = message.text.lower()
     
+    # Проверяем, не находится ли пользователь уже в диалоге
+    current_state = await state.get_state()
+    if current_state is not None:
+        return  # Не мешаем текущему диалогу
+    
     # Приветствия
-    greetings = ["привет", "здравствуй", "хай", "hello", "добрый"]
+    greetings = ["привет", "здравствуй", "хай", "hello", "добрый", "доброе", "добрый день"]
     if any(word in text_lower for word in greetings):
         await message.answer(
             "👋 Привет! Я бот погоды.\n"
-            "Напиши 'погода' и название города, например: 'погода Москва'"
+            "Напиши 'погода' и название города, например: 'погода Москва'\n"
+            "Или используй /weather"
         )
         return
     
-    # Запрос погоды
+    # Запрос погоды - ищем разные паттерны
+    weather_patterns = [
+        r'погода\s+в\s+(\w+)',           # "погода в москве"
+        r'погода\s+(\w+)',                # "погода москва"
+        r'(\w+)\s+погода',                 # "москва погода"
+        r'погода'                          # просто "погода"
+    ]
+    
     if "погода" in text_lower:
-        # Пробуем извлечь город из сообщения
-        match = re.search(r'погода\s+(\w+)', text_lower)
-        if match:
-            city = match.group(1).capitalize()
-            await message.answer(f"🔍 Ищу погоду для *{city}*...", parse_mode="Markdown")
-            weather = await get_current_weather(city)
+        city_found = None
+        
+        # Пробуем извлечь город по разным паттернам
+        for pattern in weather_patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                if len(match.groups()) > 0:
+                    city_found = match.group(1).capitalize()
+                break
+        
+        if city_found:
+            # Сразу показываем текущую погоду для найденного города
+            await message.answer(f"🔍 Ищу погоду для *{city_found}*...", parse_mode="Markdown")
+            weather = await get_current_weather(city_found)
             if weather:
                 await message.answer(weather, parse_mode="Markdown")
                 return
+            else:
+                await message.answer(f"❌ Не удалось найти город *{city_found}*. Попробуй уточнить.", parse_mode="Markdown")
+                # Переходим к ручному вводу города
+                await state.set_state(WeatherStates.waiting_for_city)
+                return
         
         # Если город не извлекли, спрашиваем
-        await message.answer("🌍 Напиши название города:")
+        await message.answer("🌍 Напиши название города (например, `Москва`):", parse_mode="Markdown")
         await state.set_state(WeatherStates.waiting_for_city)
         return
 
@@ -486,6 +501,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
