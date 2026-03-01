@@ -150,6 +150,7 @@ def get_start_keyboard():
 # ================== ОБРАБОТЧИКИ КОМАНД ==================
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    """Приветствие с красивыми inline-кнопками"""
     await message.answer(
         "👋 *Привет! Я бот с прогнозом погоды*\n\n"
         "🔍 Нажми кнопку ниже, чтобы узнать погоду в любом городе мира!\n"
@@ -160,17 +161,31 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
+    """Справка с реально кликабельными командами"""
+    bot_username = (await bot.get_me()).username
+    
+    # Текст с командами-ссылками
     await message.answer(
-        "📋 *Доступные команды:*\n\n"
-        "🔹 `/start` — приветствие\n"
-        "🔹 `/help` — эта подсказка\n"
-        "🔹 `/weather` — узнать погоду\n\n"
-        "🌤 *Как пользоваться:*\n"
-        "1. Нажми `/weather` или кнопку «Узнать погоду»\n"
-        "2. Введи название города (например, `Москва`)\n"
-        "3. Выбери количество дней (1–5)\n\n"
-        "_Пример: /weather → Москва → 3 дня_",
-        parse_mode="Markdown"
+        f'📋 <b>Доступные команды:</b>\n\n'
+        f'🔹 <a href="tg://resolve?domain={bot_username}&command=start">/start</a> — приветствие\n'
+        f'🔹 <a href="tg://resolve?domain={bot_username}&command=help">/help</a> — эта подсказка\n'
+        f'🔹 <a href="tg://resolve?domain={bot_username}&command=weather">/weather</a> — узнать погоду\n\n'
+        f'🌤 <b>Как пользоваться:</b>\n'
+        f'1. Нажми /weather или кнопку ниже\n'
+        f'2. Введи название города (например, Москва)\n'
+        f'3. Выбери количество дней (1–5)',
+        parse_mode="HTML"
+    )
+    
+    # Кнопки для быстрого доступа
+    help_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌤 Узнать погоду", callback_data="start_weather")],
+        [InlineKeyboardButton(text="📢 Поделиться ботом", switch_inline_query="бот погоды")]
+    ])
+    
+    await message.answer(
+        "🌟 Выбери действие:",
+        reply_markup=help_keyboard
     )
 
 @dp.message(Command("weather"))
@@ -188,6 +203,23 @@ async def callback_start_weather(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(lambda c: c.data == "start_help")
 async def callback_start_help(callback: CallbackQuery):
     await cmd_help(callback.message)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "share_bot")
+async def callback_share_bot(callback: CallbackQuery):
+    """Обработка кнопки поделиться"""
+    bot_username = (await bot.get_me()).username
+    share_text = f"Отличный бот с прогнозом погоды! 👉 @{bot_username}"
+    
+    # Создаем кнопку для отправки другу
+    share_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 Отправить другу", switch_inline_query=share_text)]
+    ])
+    
+    await callback.message.answer(
+        "Нажми кнопку ниже, чтобы отправить бота другу:",
+        reply_markup=share_keyboard
+    )
     await callback.answer()
 
 # ================== ОБРАБОТЧИКИ СОСТОЯНИЙ ==================
@@ -348,4 +380,5 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
