@@ -182,6 +182,35 @@ def wind_direction_to_arrow(degrees: float) -> str:
     index = round(degrees / 45) % 8
     return arrows[index]
 
+# ================== СОВЕТЫ ПО ОДЕЖДЕ ==================
+
+def get_clothing_advice(temp, weather_desc, wind_speed):
+    advice = []
+    if temp < -10:
+        advice.append("🥶 Очень холодно! Надевай пуховик, шапку и шарф")
+    elif temp < 0:
+        advice.append("🧥 Холодно. Куртка и теплая обувь обязательны")
+    elif temp < 10:
+        advice.append("🧥 Прохладно. Легкая куртка или свитер")
+    elif temp < 20:
+        advice.append("👕 Свитер или ветровка будет в самый раз")
+    else:
+        advice.append("👕 Тепло! Футболка и шорты 👍")
+    
+    if "дождь" in weather_desc.lower():
+        advice.append("☔️ Возьми зонтик!")
+    if wind_speed > 10:
+        advice.append("💨 Сильный ветер, застегнись")
+    
+    return "\n".join(advice)
+
+
+# ================== ВЕРОЯТНОСТЬ ОСАДКОВ ==================
+
+pop = item.get("pop", 0)  # probability of precipitation
+if pop > 0:
+    forecast_text += f"🌧 Вероятность дождя: {pop * 100:.0f}%\n"
+
 # ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
 
 def clean_city_name(city: str) -> str:
@@ -752,6 +781,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
