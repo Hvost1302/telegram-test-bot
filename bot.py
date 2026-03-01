@@ -108,14 +108,17 @@ async def get_weather_forecast(city: str, days: int) -> str:
                     "descriptions": [],
                     "humidity": [],
                     "wind_speed": [],
-                    "wind_deg": []  # Добавляем направление ветра
+                    "wind_deg": [],
+                    "pop": []  # Для вероятности осадков
                 }
             
+            # Заполняем данные
             daily_data[date]["temps"].append(item["main"]["temp"])
             daily_data[date]["descriptions"].append(item["weather"][0]["description"])
             daily_data[date]["humidity"].append(item["main"]["humidity"])
             daily_data[date]["wind_speed"].append(item["wind"]["speed"])
             daily_data[date]["wind_deg"].append(item["wind"].get("deg", 0))
+            daily_data[date]["pop"].append(item.get("pop", 0))  # вероятность осадков
         
         if not daily_data:
             return f"🌍 *Прогноз для {city_name}*\n\nНа ближайшие дни прогноз отсутствует."
@@ -124,7 +127,7 @@ async def get_weather_forecast(city: str, days: int) -> str:
         forecast_text = f"🌍 *Прогноз погоды для {city_name} на {days} дн.*\n\n"
         days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
         
-        for i, (date, data) in enumerate(sorted(daily_data.items())[:days]):
+        for date, data in list(sorted(daily_data.items()))[:days]:
             temps = data["temps"]
             temp_min = min(temps)
             temp_max = max(temps)
@@ -132,24 +135,32 @@ async def get_weather_forecast(city: str, days: int) -> str:
             
             avg_humidity = sum(data["humidity"]) / len(data["humidity"])
             avg_wind_speed = sum(data["wind_speed"]) / len(data["wind_speed"])
-            
-            # Для направления ветра берем среднее (с учетом круговой природы)
             avg_wind_deg = sum(data["wind_deg"]) / len(data["wind_deg"])
+            
+            # Направление ветра
             wind_dir = wind_direction_to_text(avg_wind_deg)
             wind_arrow = wind_direction_to_arrow(avg_wind_deg)
             
+            # Описание погоды
             description = max(set(data["descriptions"]), key=data["descriptions"].count).capitalize()
+            
+            # Вероятность осадков (средняя за день)
+            avg_pop = sum(data["pop"]) / len(data["pop"]) * 100
             
             date_str = date.strftime("%d.%m")
             day_name = days_ru[date.weekday()]
             
-            forecast_text += (
-                f"📅 *{date_str} ({day_name})*\n"
-                f"🌡 {temp_min:.0f}…{temp_max:.0f}°C (ср. {avg_temp:.1f}°C)\n"
-                f"☁️ {description}\n"
-                f"💧 Влажность: {avg_humidity:.0f}%\n"
-                f"🌬 Ветер: {avg_wind_speed:.1f} м/с, {wind_arrow} {wind_dir}\n\n"
-            )
+            forecast_text += f"📅 *{date_str} ({day_name})*\n"
+            forecast_text += f"🌡 {temp_min:.0f}…{temp_max:.0f}°C (ср. {avg_temp:.1f}°C)\n"
+            forecast_text += f"☁️ {description}\n"
+            forecast_text += f"💧 Влажность: {avg_humidity:.0f}%\n"
+            forecast_text += f"🌬 Ветер: {avg_wind_speed:.1f} м/с {wind_arrow} {wind_dir}\n"
+            
+            # Показываем вероятность осадков, только если она значимая (>10%)
+            if avg_pop > 10:
+                forecast_text += f"🌧 Вероятность осадков: {avg_pop:.0f}%\n"
+            
+            forecast_text += "\n"
         
         return forecast_text
         
@@ -204,69 +215,6 @@ def get_clothing_advice(temp, weather_desc, wind_speed):
     
     return "\n".join(advice)
 
-
-# ================== ВЕРОЯТНОСТЬ ОСАДКОВ ==================
-
-# В функции get_weather_forecast, внутри цикла for item in forecast_data["list"]:
-for item in forecast_data["list"]:
-    date = datetime.fromtimestamp(item["dt"]).date()
-    
-    if date == today:
-        continue
-        
-    if date not in daily_data:
-        daily_data[date] = {
-            "temps": [],
-            "descriptions": [],
-            "humidity": [],
-            "wind_speed": [],
-            "wind_deg": [],
-            "pop": []  # Добавляем массив для вероятности осадков
-        }
-    
-    daily_data[date]["temps"].append(item["main"]["temp"])
-    daily_data[date]["descriptions"].append(item["weather"][0]["description"])
-    daily_data[date]["humidity"].append(item["main"]["humidity"])
-    daily_data[date]["wind_speed"].append(item["wind"]["speed"])
-    daily_data[date]["wind_deg"].append(item["wind"].get("deg", 0))
-    
-    # ✅ ПРАВИЛЬНО: pop внутри цикла, где item определен
-    pop = item.get("pop", 0)  # вероятность осадков (0-1)
-    daily_data[date]["pop"].append(pop)
-
-# При формировании текста прогноза
-avg_pop = sum(data["pop"]) / len(data["pop"]) * 100  # переводим в проценты
-if avg_pop > 10:  # показываем, только если есть значимая вероятность
-    forecast_text += f"🌧 Вероятность дождя: {avg_pop:.0f}%\n"
-
-# Группируем прогнозы по дням
-daily_data = {}
-today = datetime.now().date()
-
-for item in forecast_data["list"]:
-    date = datetime.fromtimestamp(item["dt"]).date()
-    
-    if date == today:
-        continue
-        
-    if date not in daily_data:
-        daily_data[date] = {
-            "temps": [],
-            "descriptions": [],
-            "humidity": [],
-            "wind_speed": [],
-            "wind_deg": [],
-            "pop": []  # ← ДОБАВЛЯЕМ ЭТУ СТРОКУ
-        }
-    
-    daily_data[date]["temps"].append(item["main"]["temp"])
-    daily_data[date]["descriptions"].append(item["weather"][0]["description"])
-    daily_data[date]["humidity"].append(item["main"]["humidity"])
-    daily_data[date]["wind_speed"].append(item["wind"]["speed"])
-    daily_data[date]["wind_deg"].append(item["wind"].get("deg", 0))
-    
-    # ← ЭТУ СТРОКУ ТОЖЕ ДОБАВЛЯЕМ (ВНУТРИ ЦИКЛА!)
-    daily_data[date]["pop"].append(item.get("pop", 0))
 
 # ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
 
@@ -838,6 +786,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
