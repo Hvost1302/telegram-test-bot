@@ -125,6 +125,93 @@ async def get_weather_forecast(city: str, days: int) -> str:
         logging.error(f"Ошибка прогноза: {e}")
         return None
 
+# ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
+
+def clean_city_name(city: str) -> str:
+    """Очищает название города от падежных окончаний"""
+    # Словарь частых замен
+    replacements = {
+        'москве': 'Москва',
+        'москва': 'Москва',
+        'питере': 'Санкт-Петербург',
+        'спб': 'Санкт-Петербург',
+        'петербурге': 'Санкт-Петербург',
+        'ленинграде': 'Санкт-Петербург',
+        'ленинград': 'Санкт-Петербург',
+        'киев': 'Киев',
+        'киеве': 'Киев',
+        'минск': 'Минск',
+        'минске': 'Минск',
+        'лондон': 'London',
+        'лондоне': 'London',
+        'париж': 'Paris',
+        'париже': 'Paris',
+        'берлин': 'Berlin',
+        'берлине': 'Berlin',
+        'рим': 'Rome',
+        'риме': 'Rome',
+        'токио': 'Tokyo',
+        'пекин': 'Beijing',
+        'пекине': 'Beijing',
+        'севастополь': 'Sevastopol',
+        'севастополе': 'Sevastopol',
+        'симферополь': 'Simferopol',
+        'симферополе': 'Simferopol',
+        'ялта': 'Yalta',
+        'ялте': 'Yalta',
+    }
+    
+    city_lower = city.lower()
+    if city_lower in replacements:
+        return replacements[city_lower]
+    
+    # Если город заканчивается на 'е', 'а', 'у', 'и' - базовая очистка
+    endings = ['е', 'у', 'а', 'и', 'ы']
+    if any(city_lower.endswith(e) for e in endings):
+        # Для русских городов убираем окончание
+        if city_lower.endswith('е') or city_lower.endswith('у'):
+            return city[:-1]
+        if city_lower.endswith('а') or city_lower.endswith('ы'):
+            # Сохраняем первую букву заглавной
+            return city[:-1] + 'а' if city_lower.endswith('ы') else city[:-1]
+    
+    # Особые случаи
+    if city_lower.endswith('ии'):  # например "в ялте" -> "ялта"
+        return city[:-2] + 'а'
+    
+    return city
+
+def extract_days_from_query(text: str) -> int:
+    """
+    Извлекает количество дней из текста запроса.
+    Возвращает число дней (1-5) или None, если не указано.
+    """
+    text_lower = text.lower()
+    
+    # Паттерны для поиска дней
+    days_patterns = [
+        r'на\s+(\d+)\s+день',      # "на 5 дней", "на 3 дня"
+        r'на\s+(\d+)\s+дня',
+        r'на\s+(\d+)\s+дней',
+        r'(\d+)\s+день',            # "5 дней"
+        r'(\d+)\s+дня',
+        r'(\d+)\s+дней',
+        r'прогноз\s+на\s+(\d+)',    # "прогноз на 5"
+        r'на\s+(\d+)',               # "на 5"
+    ]
+    
+    for pattern in days_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            try:
+                days = int(match.group(1))
+                # Ограничиваем от 1 до 5 дней
+                return max(1, min(days, 5))
+            except:
+                pass
+    
+    return None  # дни не указаны
+
 # ================== КЛАВИАТУРЫ ==================
 def get_start_keyboard():
     """Красивая клавиатура для /start"""
@@ -206,6 +293,142 @@ async def cmd_weather(message: Message, state: FSMContext):
     await message.answer("🌍 Напиши название города (например, `Москва`, `Лондон`, `Токио`):", parse_mode="Markdown")
     await state.set_state(WeatherStates.waiting_for_city)
 
+@dp.callback_query(lambda c: c.data.startswith('quick_forecast_'))
+async def callback_quick_forecast(callback: CallbackQuery):
+    """Обработка быстрого перехода к прогнозу"""
+    # Формат: quick_forecast_город_дни
+    parts = callback.data.split('_')
+    if len(parts) >= 4:
+        city = parts[2]
+        days = int(parts[3])
+        
+        await callback.message.answer(f"🔍 Получаю прогноз на *{days}* дн. для *{city}*...", parse_mode="Markdown")
+        
+        forecast = await get_weather_forecast(city, days)
+        if forecast:
+            await callback.message.answer(forecast, parse_mode="Markdown")
+        else:
+            await callback.message.answer("❌ Не удалось получить прогноз.", parse_mode="Markdown")
+    
+    await callback.answer()
+
+# ================== ОБРАБОТЧИКИ СОСТОЯНИЙ ==================
+@dp.message(WeatherStates.waiting_for_city)
+async def process_city(message: Message, state: FSMContext):
+    """Обработка введённого города"""
+    city = message.text.strip()
+    city_clean = clean_city_name(city)
+    
+    # Проверяем, не было ли сохранено количество дней
+    data = await state.get_data()
+    requested_days = data.get("requested_days")
+    
+    if requested_days:
+        # Если пользователь запросил прогноз на определенное количество дней
+        await message.answer(f"🔍 Получаю прогноз на *{requested_days}* дн. для *{city_clean}*...", parse_mode="Markdown")
+        
+        forecast = await get_weather_forecast(city_clean, requested_days)
+        if forecast:
+            await message.answer(forecast, parse_mode="Markdown")
+        else:
+            # Если прогноз не работает, показываем текущую погоду
+            weather = await get_current_weather(city_clean)
+            if weather:
+                await message.answer(
+                    f"⚠️ Не удалось получить прогноз, но вот текущая погода:\n\n{weather}",
+                    parse_mode="Markdown"
+                )
+            else:
+                await message.answer(
+                    f"❌ Не удалось найти город *{city_clean}*.", 
+                    parse_mode="Markdown"
+                )
+        
+        await state.clear()
+        return
+    
+    # Стандартный поток: город -> выбор типа (текущая/прогноз)
+    await state.update_data(city=city_clean)
+    
+    await message.answer(
+        f"📍 Город: *{city_clean}*\n\nЧто показать?",
+        parse_mode="Markdown",
+        reply_markup=get_weather_type_keyboard()
+    )
+    await state.set_state(WeatherStates.waiting_for_type)
+    
+@dp.callback_query(WeatherStates.waiting_for_days)
+async def process_days_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработка выбора дней через кнопки"""
+    action = callback.data
+    
+    if action == "days_cancel":
+        await callback.message.edit_text("❌ Запрос отменён.")
+        await state.clear()
+        await callback.answer()
+        return
+    
+    days = int(action.split("_")[1])
+    data = await state.get_data()
+    city = data.get("city")
+    
+    await callback.message.edit_text(f"🔍 Получаю прогноз на *{days}* дн. для *{city}*...", parse_mode="Markdown")
+    
+    forecast = await get_weather_forecast(city, days)
+    
+    if forecast:
+        await callback.message.answer(forecast, parse_mode="Markdown")
+    else:
+        # Если прогноз не работает, пробуем текущую погоду
+        current = await get_current_weather(city)
+        if current:
+            await callback.message.answer(
+                f"⚠️ Не удалось получить прогноз, но вот текущая погода:\n\n{current}",
+                parse_mode="Markdown"
+            )
+        else:
+            await callback.message.answer(
+                "❌ Город не найден. Проверь название и попробуй `/weather` снова.",
+                parse_mode="Markdown"
+            )
+    
+    await state.clear()
+    await callback.answer()
+
+@dp.message(WeatherStates.waiting_for_days)
+async def process_days_text(message: Message, state: FSMContext):
+    if message.text.isdigit():
+        days = int(message.text)
+        if 1 <= days <= 5:
+            data = await state.get_data()
+            city = data.get("city")
+            
+            await message.answer(f"🔍 Получаю прогноз на *{days}* дн. для *{city}*...", parse_mode="Markdown")
+            
+            forecast = await get_weather_forecast(city, days)
+            
+            if forecast:
+                await message.answer(forecast, parse_mode="Markdown")
+            else:
+                current = await get_current_weather(city)
+                if current:
+                    await message.answer(
+                        f"⚠️ Вот текущая погода вместо прогноза:\n\n{current}",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await message.answer(
+                        "❌ Не удалось получить данные о погоде. Попробуй позже.",
+                        parse_mode="Markdown"
+                    )
+            
+            await state.clear()
+        else:
+            await message.answer("❌ Введи число от 1 до 5 или выбери на клавиатуре.")
+    else:
+        await message.answer("Пожалуйста, выбери количество дней на клавиатуре или введи число от 1 до 5.")
+
+
 # ================== ОБРАБОТЧИК ВЫБОРА ТИПА ==================
 
 @dp.callback_query(WeatherStates.waiting_for_type)
@@ -279,90 +502,6 @@ async def callback_share_bot(callback: CallbackQuery):
     )
     await callback.answer()
 
-# ================== ОБРАБОТЧИКИ СОСТОЯНИЙ ==================
-@dp.message(WeatherStates.waiting_for_city)
-async def process_city(message: Message, state: FSMContext):
-    """Обработка введённого города"""
-    city = message.text.strip()
-    await state.update_data(city=city)
-    
-    await message.answer(
-        f"📍 Город: *{city}*\n\nЧто показать?",
-        parse_mode="Markdown",
-        reply_markup=get_weather_type_keyboard()
-    )
-    await state.set_state(WeatherStates.waiting_for_type)
-
-@dp.callback_query(WeatherStates.waiting_for_days)
-async def process_days_callback(callback: CallbackQuery, state: FSMContext):
-    """Обработка выбора дней через кнопки"""
-    action = callback.data
-    
-    if action == "days_cancel":
-        await callback.message.edit_text("❌ Запрос отменён.")
-        await state.clear()
-        await callback.answer()
-        return
-    
-    days = int(action.split("_")[1])
-    data = await state.get_data()
-    city = data.get("city")
-    
-    await callback.message.edit_text(f"🔍 Получаю прогноз на *{days}* дн. для *{city}*...", parse_mode="Markdown")
-    
-    forecast = await get_weather_forecast(city, days)
-    
-    if forecast:
-        await callback.message.answer(forecast, parse_mode="Markdown")
-    else:
-        # Если прогноз не работает, пробуем текущую погоду
-        current = await get_current_weather(city)
-        if current:
-            await callback.message.answer(
-                f"⚠️ Не удалось получить прогноз, но вот текущая погода:\n\n{current}",
-                parse_mode="Markdown"
-            )
-        else:
-            await callback.message.answer(
-                "❌ Город не найден. Проверь название и попробуй `/weather` снова.",
-                parse_mode="Markdown"
-            )
-    
-    await state.clear()
-    await callback.answer()
-
-@dp.message(WeatherStates.waiting_for_days)
-async def process_days_text(message: Message, state: FSMContext):
-    if message.text.isdigit():
-        days = int(message.text)
-        if 1 <= days <= 5:
-            data = await state.get_data()
-            city = data.get("city")
-            
-            await message.answer(f"🔍 Получаю прогноз на *{days}* дн. для *{city}*...", parse_mode="Markdown")
-            
-            forecast = await get_weather_forecast(city, days)
-            
-            if forecast:
-                await message.answer(forecast, parse_mode="Markdown")
-            else:
-                current = await get_current_weather(city)
-                if current:
-                    await message.answer(
-                        f"⚠️ Вот текущая погода вместо прогноза:\n\n{current}",
-                        parse_mode="Markdown"
-                    )
-                else:
-                    await message.answer(
-                        "❌ Не удалось получить данные о погоде. Попробуй позже.",
-                        parse_mode="Markdown"
-                    )
-            
-            await state.clear()
-        else:
-            await message.answer("❌ Введи число от 1 до 5 или выбери на клавиатуре.")
-    else:
-        await message.answer("Пожалуйста, выбери количество дней на клавиатуре или введи число от 1 до 5.")
 
 
 
@@ -376,7 +515,7 @@ async def smart_reply(message: Message, state: FSMContext):
     # Проверяем, не находится ли пользователь уже в диалоге
     current_state = await state.get_state()
     if current_state is not None:
-        return  # Не мешаем текущему диалогу
+        return
     
     # Приветствия
     greetings = ["привет", "здравствуй", "хай", "hello", "добрый", "доброе", "добрый день", "здравствуйте"]
@@ -390,89 +529,95 @@ async def smart_reply(message: Message, state: FSMContext):
         return
     
     # Запрос погоды
-    if "погода" in text_lower:
+    if "погода" in text_lower or "прогноз" in text_lower:
         city_found = None
         
-        # Паттерн 1: "погода в Москве"
-        match = re.search(r'погода\s+в\s+(\w+)', text_lower)
-        if match:
-            city_found = match.group(1)
+        # Пробуем извлечь город из разных паттернов
+        city_patterns = [
+            r'погода\s+в\s+(\w+)',
+            r'прогноз\s+в\s+(\w+)',
+            r'погода\s+(\w+)',
+            r'прогноз\s+(\w+)',
+            r'(\w+)\s+погода',
+            r'(\w+)\s+прогноз',
+        ]
         
-        # Паттерн 2: "погода Москва" (самый частый случай)
-        if not city_found:
-            match = re.search(r'погода\s+(\w+)', text_lower)
+        for pattern in city_patterns:
+            match = re.search(pattern, text_lower)
             if match:
                 city_found = match.group(1)
+                break
         
-        # Паттерн 3: "Москва погода"
-        if not city_found:
-            match = re.search(r'(\w+)\s+погода', text_lower)
-            if match:
-                city_found = match.group(1)
+        # Проверяем, указано ли количество дней
+        days = extract_days_from_query(text_lower)
         
-        # Паттерн 4: просто "погода" (без города)
-        if not city_found:
-            await message.answer("🌍 Напиши название города (например, `Москва`):", parse_mode="Markdown")
-            await state.set_state(WeatherStates.waiting_for_city)
+        if city_found:
+            # Очищаем название города
+            city_clean = clean_city_name(city_found)
+            
+            logging.info(f"🔍 Запрос: город='{city_clean}', дней={days}")
+            
+            if days:
+                # Запрашиваем прогноз на указанное количество дней
+                await message.answer(f"🔍 Получаю прогноз на *{days}* дн. для *{city_clean}*...", parse_mode="Markdown")
+                forecast = await get_weather_forecast(city_clean, days)
+                
+                if forecast:
+                    await message.answer(forecast, parse_mode="Markdown")
+                else:
+                    weather = await get_current_weather(city_clean)
+                    if weather:
+                        await message.answer(
+                            f"⚠️ Не удалось получить прогноз, но вот текущая погода:\n\n{weather}",
+                            parse_mode="Markdown"
+                        )
+                    else:
+                        await message.answer(
+                            f"❌ Не удалось найти город *{city_clean}*. Проверь название.",
+                            parse_mode="Markdown"
+                        )
+            else:
+                # Показываем текущую погоду
+                await message.answer(f"🔍 Получаю погоду для *{city_clean}*...", parse_mode="Markdown")
+                weather = await get_current_weather(city_clean)
+                
+                if weather:
+                    await message.answer(weather, parse_mode="Markdown")
+                    
+                    # Добавляем кнопку для быстрого перехода к прогнозу
+                    forecast_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text=f"📅 Прогноз на 5 дней для {city_clean}", 
+                            callback_data=f"quick_forecast_{city_clean}_5"
+                        )]
+                    ])
+                    
+                    await message.answer(
+                        "Хочешь увидеть прогноз на несколько дней?",
+                        reply_markup=forecast_keyboard
+                    )
+                else:
+                    await message.answer(
+                        f"❌ Не удалось найти город *{city_clean}*. Проверь название.",
+                        parse_mode="Markdown"
+                    )
             return
         
-        # 🔥 ВОТ ЗДЕСЬ ИСПОЛЬЗУЕМ ФУНКЦИЮ ОЧИСТКИ 🔥
-        city_clean = clean_city_name(city_found)
-        
-        logging.info(f"🔍 Извлечен город: '{city_found}' -> очищенный: '{city_clean}'")
-        
-        # Показываем погоду
-        await message.answer(f"🔍 Получаю погоду для *{city_clean}*...", parse_mode="Markdown")
-        weather = await get_current_weather(city_clean)
-        
-        if weather:
-            await message.answer(weather, parse_mode="Markdown")
-        else:
-            # Если не получилось с очищенным, пробуем исходный
-            await message.answer(f"❌ Не удалось найти город *{city_clean}*. Проверь название.", parse_mode="Markdown")
-            
-            # Предлагаем ввести город вручную
-            await message.answer("🌍 Напиши название города правильно:", parse_mode="Markdown")
+        # Если город не извлекли
+        days = extract_days_from_query(text_lower)
+        if days:
+            await message.answer(
+                f"🌍 Для какого города показать прогноз на {days} дней?",
+                parse_mode="Markdown"
+            )
             await state.set_state(WeatherStates.waiting_for_city)
+            await state.update_data(requested_days=days)
+            return
         
+        # Просто запрос погоды без города
+        await message.answer("🌍 Напиши название города (например, `Москва`):", parse_mode="Markdown")
+        await state.set_state(WeatherStates.waiting_for_city)
         return
-
-
-def clean_city_name(city: str) -> str:
-    """Очищает название города от падежных окончаний"""
-    # Словарь частых замен
-    replacements = {
-        'москве': 'Москва',
-        'москва': 'Москва',
-        'питере': 'Санкт-Петербург',
-        'спб': 'Санкт-Петербург',
-        'петербурге': 'Санкт-Петербург',
-        'ленинграде': 'Санкт-Петербург',
-        'ленинград': 'Санкт-Петербург',
-        'киев': 'Киев',
-        'киеве': 'Киев',
-        'минск': 'Минск',
-        'минске': 'Минск',
-        'лондон': 'London',
-        'лондоне': 'London',
-        'париж': 'Paris',
-        'париже': 'Paris',
-        'берлин': 'Berlin',
-        'берлине': 'Berlin',
-        'рим': 'Rome',
-        'риме': 'Rome',
-    }
-    
-    city_lower = city.lower()
-    if city_lower in replacements:
-        return replacements[city_lower]
-    
-    # Если город заканчивается на 'е', 'а', 'у' - базовая очистка
-    if city_lower.endswith('е'):
-        # Пробуем убрать последнюю букву
-        return city[:-1]
-    
-    return city
 
 # ================== ОБРАБОТЧИК ВСЕГО ОСТАЛЬНОГО ==================
 @dp.message()
@@ -550,6 +695,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
