@@ -375,6 +375,41 @@ async def process_days_text(message: Message, state: FSMContext):
     else:
         await message.answer("Пожалуйста, выбери количество дней на клавиатуре или введи число от 1 до 5.")
 
+
+
+# ================== ОБРАБОТЧИК КЛЮЧЕВЫХ СЛОВ ==================
+
+
+@dp.message(F.text, ~F.text.startswith('/'))
+async def smart_reply(message: Message, state: FSMContext):
+    text_lower = message.text.lower()
+    
+    # Приветствия
+    greetings = ["привет", "здравствуй", "хай", "hello", "добрый"]
+    if any(word in text_lower for word in greetings):
+        await message.answer(
+            "👋 Привет! Я бот погоды.\n"
+            "Напиши 'погода' и название города, например: 'погода Москва'"
+        )
+        return
+    
+    # Запрос погоды
+    if "погода" in text_lower:
+        # Пробуем извлечь город из сообщения
+        match = re.search(r'погода\s+(\w+)', text_lower)
+        if match:
+            city = match.group(1).capitalize()
+            await message.answer(f"🔍 Ищу погоду для *{city}*...", parse_mode="Markdown")
+            weather = await get_current_weather(city)
+            if weather:
+                await message.answer(weather, parse_mode="Markdown")
+                return
+        
+        # Если город не извлекли, спрашиваем
+        await message.answer("🌍 Напиши название города:")
+        await state.set_state(WeatherStates.waiting_for_city)
+        return
+
 # ================== ОБРАБОТЧИК ВСЕГО ОСТАЛЬНОГО ==================
 @dp.message()
 async def handle_other_messages(message: Message):
@@ -451,6 +486,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
