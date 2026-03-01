@@ -43,7 +43,7 @@ class WeatherStates(StatesGroup):
 
 # ================== ФУНКЦИИ ПОГОДЫ ==================
 async def get_current_weather(city: str) -> str:
-    """Получает текущую погоду с UV-индексом"""
+    """Получает текущую погоду с восходом/закатом и фазой луны"""
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
         response = requests.get(url, timeout=10)
@@ -53,24 +53,50 @@ async def get_current_weather(city: str) -> str:
             logging.error(f"Ошибка API: {data}")
             return None
         
-        # Получаем координаты для UV-индекса
+        # Получаем координаты для UV и других данных
         lat = data['coord']['lat']
         lon = data['coord']['lon']
         
         # Получаем UV-индекс
         uv_data = await get_uv_index(lat, lon)
         
-        # ... остальные данные (ветер, одежда и т.д.) ...
+        # Получаем дополнительные данные о луне и прогнозе через One Call API
+        # (чтобы получить фазу луны, нужны данные из daily)
+        onecall_url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&exclude=minutely,hourly&appid={WEATHER_API_KEY}&units=metric"
+        onecall_response = requests.get(onecall_url, timeout=10)
+        onecall_data = onecall_response.json() if onecall_response.status_code == 200 else None
+        
+        # Параметры ветра
         wind_deg = data.get("wind", {}).get("deg", 0)
         wind_dir = wind_direction_to_text(wind_deg)
         wind_arrow = wind_direction_to_arrow(wind_deg)
         wind_speed = data["wind"]["speed"]
         
+        # Время восхода и заката (из current weather API) [citation:1]
+        timezone_offset = data.get('timezone', 0)  # смещение в секундах от UTC
+        sunrise_time = format_unix_time(data['sys']['sunrise'], timezone_offset)
+        sunset_time = format_unix_time(data['sys']['sunset'], timezone_offset)
+        
+        # Фаза луны (из One Call API, если доступно)
+        moon_phase_text = ""
+        if onecall_data and 'daily' in onecall_data and len(onecall_data['daily']) > 0:
+            moon_phase_value = onecall_data['daily'][0].get('moon_phase', 0)
+            moon_phase_text = get_moon_phase_name(moon_phase_value)
+            
+            # Также можно получить время восхода и захода луны [citation:10]
+            moonrise = onecall_data['daily'][0].get('moonrise', 0)
+            moonset = onecall_data['daily'][0].get('moonset', 0)
+            if moonrise and moonset:
+                moonrise_time = format_unix_time(moonrise, timezone_offset)
+                moonset_time = format_unix_time(moonset, timezone_offset)
+                moon_phase_text += f" (🌅 {moonrise_time} / 🌇 {moonset_time})"
+        
+        # Совет по одежде
         weather_desc = data['weather'][0]['description']
         temp = data['main']['temp']
         clothing_advice = get_clothing_advice(temp, weather_desc, wind_speed)
         
-        # Получаем температуру воды
+        # Температура воды
         water_temp = await get_water_temperature(city)
         
         # Формируем сообщение
@@ -80,8 +106,16 @@ async def get_current_weather(city: str) -> str:
             f"📝 Описание: {weather_desc.capitalize()}\n"
             f"💧 Влажность: {data['main']['humidity']}%\n"
             f"🌬 Ветер: {wind_speed} м/с, {wind_arrow} {wind_dir}\n"
-            f"📊 Давление: {data['main']['pressure']} гПа\n\n"
+            f"📊 Давление: {data['main']['pressure']} гПа\n"
+            f"🌅 Восход: {sunrise_time}\n"
+            f"🌇 Закат: {sunset_time}\n"
         )
+        
+        # Добавляем фазу луны, если доступна
+        if moon_phase_text:
+            weather_text += f"{moon_phase_text}\n"
+        
+        weather_text += "\n"
         
         # Добавляем температуру воды
         if water_temp:
@@ -102,9 +136,104 @@ async def get_current_weather(city: str) -> str:
         
     except Exception as e:
         logging.error(f"Ошибка в get_current_weather: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 async def get_weather_forecast(city: str, days: int) -> str:
+    """Получает прогноз на указанное количество дней"""
+    try:
+        geo_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
+        geo_response = requests.get(geo_url, timeout=10)
+        geo_data = geo_response.json()
+
+        if geo_data.get("cod") != 200:
+            return None
+
+        lat = geo_data["coord"]["lat"]
+        lon = geo_data["coord"]["lon"]
+        city_name = geo_data["name"]
+        timezone_offset = geo_data.get('timezone', 0)  # для корректировки времени
+
+        # Используем One Call API для получения прогноза с фазами луны [citation:10]
+        onecall_url = f"https://api.openweathermap.org/data/3.0/onecall?lat={lat}&lon={lon}&exclude=current,minutely,hourly&appid={WEATHER_API_KEY}&units=metric&lang=ru"
+        onecall_response = requests.get(onecall_url, timeout=10)
+        
+        if onecall_response.status_code != 200:
+            # Fallback на старый метод
+            return await get_weather_forecast_fallback(city, days)
+        
+        forecast_data = onecall_response.json()
+        
+        if 'daily' not in forecast_data:
+            return None
+        
+        # Формируем прогноз
+        forecast_text = f"🌍 *Прогноз погоды для {city_name} на {days} дн.*\n\n"
+        days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+        
+        for i in range(min(days, len(forecast_data['daily']))):
+            day = forecast_data['daily'][i]
+            date = datetime.fromtimestamp(day['dt']).date()
+            
+            # Температура
+            temp = day['temp']
+            temp_min = temp['min']
+            temp_max = temp['max']
+            avg_temp = (temp_min + temp_max) / 2
+            
+            # Ветер
+            wind_speed = day.get('wind_speed', 0)
+            wind_deg = day.get('wind_deg', 0)
+            wind_dir = wind_direction_to_text(wind_deg)
+            wind_arrow = wind_direction_to_arrow(wind_deg)
+            
+            # Описание погоды
+            description = day['weather'][0]['description'].capitalize()
+            
+            # Влажность
+            humidity = day.get('humidity', 0)
+            
+            # Вероятность осадков
+            pop = day.get('pop', 0) * 100
+            
+            # Фаза луны [citation:6][citation:10]
+            moon_phase = day.get('moon_phase', 0)
+            moon_phase_name = get_moon_phase_name(moon_phase)
+            
+            # Восход и закат
+            sunrise = format_unix_time(day['sunrise'], timezone_offset)
+            sunset = format_unix_time(day['sunset'], timezone_offset)
+            
+            # Восход и заход луны [citation:10]
+            moonrise = format_unix_time(day.get('moonrise', 0), timezone_offset) if day.get('moonrise') else "—"
+            moonset = format_unix_time(day.get('moonset', 0), timezone_offset) if day.get('moonset') else "—"
+            
+            date_str = date.strftime("%d.%m")
+            day_name = days_ru[date.weekday()]
+            
+            forecast_text += f"📅 *{date_str} ({day_name})*\n"
+            forecast_text += f"🌡 {temp_min:.0f}…{temp_max:.0f}°C (ср. {avg_temp:.1f}°C)\n"
+            forecast_text += f"☁️ {description}\n"
+            forecast_text += f"💧 Влажность: {humidity}%\n"
+            forecast_text += f"🌬 Ветер: {wind_speed:.1f} м/с {wind_arrow} {wind_dir}\n"
+            forecast_text += f"🌅 {sunrise} | 🌇 {sunset}\n"
+            forecast_text += f"{moon_phase_name} (🌅 {moonrise} / 🌇 {moonset})\n"
+            
+            if pop > 10:
+                forecast_text += f"🌧 Вероятность осадков: {pop:.0f}%\n"
+            
+            forecast_text += "\n"
+        
+        return forecast_text
+
+    except Exception as e:
+        logging.error(f"Ошибка прогноза: {e}")
+        return None
+
+# Запасная функция, если One Call API недоступен
+async def get_weather_forecast_fallback(city: str, days: int) -> str:
+    """Старая версия прогноза без данных о луне"""
     """Получает прогноз на указанное количество дней"""
     try:
         geo_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
@@ -195,6 +324,8 @@ async def get_weather_forecast(city: str, days: int) -> str:
     except Exception as e:
         logging.error(f"Ошибка прогноза: {e}")
         return None
+         
+    pass
 
 async def get_uv_index(lat: float, lon: float) -> dict:
     """
@@ -250,6 +381,31 @@ async def get_uv_index(lat: float, lon: float) -> dict:
     except Exception as e:
         logging.error(f"☀️ [UV] Ошибка: {e}")
         return None
+
+def get_moon_phase_name(moon_phase_value: float) -> str:
+    """
+    Преобразует числовое значение фазы луны (0-1) в текстовое описание и эмодзи
+    Значения из OpenWeatherMap: 0 - новолуние, 0.25 - первая четверть, 
+    0.5 - полнолуние, 0.75 - последняя четверть [citation:2][citation:6]
+    """
+    if moon_phase_value == 0 or moon_phase_value == 1:
+        return "🌑 Новолуние"
+    elif moon_phase_value == 0.25:
+        return "🌓 Первая четверть"
+    elif moon_phase_value == 0.5:
+        return "🌕 Полнолуние"
+    elif moon_phase_value == 0.75:
+        return "🌗 Последняя четверть"
+    elif 0 < moon_phase_value < 0.25:
+        return "🌒 Растущий серп"
+    elif 0.25 < moon_phase_value < 0.5:
+        return "🌔 Растущая луна"
+    elif 0.5 < moon_phase_value < 0.75:
+        return "🌖 Убывающая луна"
+    elif 0.75 < moon_phase_value < 1:
+        return "🌘 Убывающий серп"
+    else:
+        return "🌙 Луна"
 
 
 # ================== ФУНКЦИЯ ДЛЯ ОПРЕДЕЛЕНИЯ ТЕМПЕРАТУРЫ ВОДЫ ==================
@@ -424,6 +580,22 @@ def get_clothing_advice(temp, weather_desc, wind_speed):
 
 
 # ================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==================
+
+def format_unix_time(timestamp: int, timezone_offset: int = 0) -> str:
+    """
+    Форматирует UNIX timestamp в читаемое время с учетом часового пояса [citation:4]
+    OpenWeatherMap возвращает время в UTC [citation:1]
+    """
+    from datetime import timezone, timedelta
+    
+    # Создаем объект datetime из timestamp
+    dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    
+    # Добавляем смещение часового пояса (в секундах)
+    dt_local = dt + timedelta(seconds=timezone_offset)
+    
+    # Возвращаем время в формате ЧЧ:ММ
+    return dt_local.strftime("%H:%M")
 
 def clean_city_name(city: str) -> str:
     """Очищает название города от падежных окончаний"""
@@ -993,5 +1165,6 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
