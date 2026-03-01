@@ -151,4 +151,5 @@ if __name__ == "__main__":
     try:
         web.run_app(main(), host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
     except KeyboardInterrupt:
+
         logging.info("Бот остановлен")
