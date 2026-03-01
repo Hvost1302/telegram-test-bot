@@ -194,8 +194,9 @@ def get_days_keyboard():
 async def cmd_start(message: Message):
     await message.answer(
         "👋 Привет! Я бот с прогнозом погоды.\n\n"
-        "🔍 <b>/weather</b> - Узнать погоду (текущую или на несколько дней)\n"
-        "ℹ️ <b>/help</b> - Справка"
+        "🔍 `/weather` - Узнать погоду (текущую или на несколько дней)\n"
+        "ℹ️ `/help` - Справка",
+        parse_mode="Markdown"  # Меняем режим на Markdown
     )
 
 # Обработчик /help
@@ -339,4 +340,5 @@ if __name__ == "__main__":
         web.run_app(main(), host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
     except KeyboardInterrupt:
         logging.info("Бот остановлен")
+
 
