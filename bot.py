@@ -203,54 +203,106 @@ async def get_water_temperature(city: str) -> float:
     }
     
     city_lower = city.lower()
-    logging.info(f"🔍 Проверка города для температуры воды: {city_lower}")
+    logging.info(f"🌊 [get_water_temp] Проверка города: '{city_lower}'")
     
+    # Проверяем, есть ли город в списке
     if city_lower not in crimean_beaches:
-        logging.info(f"❌ Город {city_lower} не найден в списке приморских")
+        logging.info(f"🌊 [get_water_temp] Город '{city_lower}' не в списке приморских")
         return None
     
     coords = crimean_beaches[city_lower]
     if not coords:
-        logging.info(f"❌ Город {city_lower} не на море")
+        logging.info(f"🌊 [get_water_temp] Город '{city_lower}' не на море")
         return None
     
-    logging.info(f"✅ Город {city_lower} найден, координаты: {coords}")
+    logging.info(f"🌊 [get_water_temp] Город найден, координаты: {coords}")
+    
+    # Получаем ключ
+    WWO_KEY = os.getenv("WWO_API_KEY")
+    if not WWO_KEY:
+        logging.error("🌊 [get_water_temp] ❌ WWO_API_KEY не найден в переменных окружения!")
+        logging.error(f"🌊 [get_water_temp] Все переменные: {list(os.environ.keys())}")
+        return None
+    
+    logging.info(f"🌊 [get_water_temp] Ключ найден: {WWO_KEY[:5]}...{WWO_KEY[-5:]}")
     
     try:
-        WWO_KEY = os.getenv("WWO_API_KEY")
-        if not WWO_KEY:
-            logging.error("❌ WWO_API_KEY не задан в переменных окружения!")
-            return None
+        # ПРАВИЛЬНЫЙ URL и параметры для Marine API
+        url = "https://api.worldweatheronline.com/premium/v1/marine.ashx"  # Обратите внимание: https!
         
-        url = "http://api.worldweatheronline.com/premium/v1/marine.ashx"
         params = {
             'key': WWO_KEY,
             'q': f"{coords['lat']},{coords['lon']}",
             'format': 'json',
-            'tp': 1,
+            'tp': '24',  # 24 часа - суточные данные
+            'lang': 'ru'  # Добавим русский язык
         }
         
-        logging.info(f"🌊 Запрос к API WorldWeatherOnline для {city_lower}")
-        response = requests.get(url, params=params, timeout=10)
+        logging.info(f"🌊 [get_water_temp] Отправляю запрос к: {url}")
+        logging.info(f"🌊 [get_water_temp] Параметры: {params}")
+        
+        response = requests.get(url, params=params, timeout=15)
+        
+        logging.info(f"🌊 [get_water_temp] Статус ответа: {response.status_code}")
         
         if response.status_code != 200:
-            logging.error(f"❌ Ошибка HTTP: {response.status_code}")
+            logging.error(f"🌊 [get_water_temp] ❌ Ошибка HTTP: {response.status_code}")
+            logging.error(f"🌊 [get_water_temp] Тело ответа: {response.text[:200]}")
             return None
         
         data = response.json()
+        logging.info(f"🌊 [get_water_temp] Получен JSON, ключи: {list(data.keys())}")
         
         # Проверяем структуру ответа
-        if 'data' not in data or 'weather' not in data['data']:
-            logging.error(f"❌ Неожиданный формат ответа: {data}")
+        if 'data' not in data:
+            logging.error(f"🌊 [get_water_temp] ❌ Нет поля 'data' в ответе")
+            logging.error(f"🌊 [get_water_temp] Полный ответ: {data}")
             return None
         
-        water_temp = data['data']['weather'][0]['hourly'][0]['waterTemp_C']
-        logging.info(f"✅ Температура воды для {city_lower}: {water_temp}°C")
+        if 'weather' not in data['data']:
+            logging.error(f"🌊 [get_water_temp] ❌ Нет поля 'weather' в data")
+            return None
         
-        return float(water_temp)
+        if not data['data']['weather']:
+            logging.error(f"🌊 [get_water_temp] ❌ Пустой список weather")
+            return None
         
+        # Парсим температуру воды
+        weather_list = data['data']['weather']
+        first_day = weather_list[0]
+        
+        if 'hourly' not in first_day:
+            logging.error(f"🌊 [get_water_temp] ❌ Нет поля 'hourly' в первом дне")
+            return None
+        
+        hourly = first_day['hourly'][0]
+        
+        if 'waterTemp_C' not in hourly:
+            logging.error(f"🌊 [get_water_temp] ❌ Нет поля waterTemp_C")
+            logging.error(f"🌊 [get_water_temp] Доступные поля: {list(hourly.keys())}")
+            return None
+        
+        water_temp = float(hourly['waterTemp_C'])
+        logging.info(f"🌊 [get_water_temp] ✅ Температура воды: {water_temp}°C")
+        
+        return water_temp
+        
+    except requests.exceptions.Timeout:
+        logging.error("🌊 [get_water_temp] ❌ Таймаут запроса")
+        return None
+    except requests.exceptions.ConnectionError as e:
+        logging.error(f"🌊 [get_water_temp] ❌ Ошибка соединения: {e}")
+        return None
+    except requests.exceptions.RequestException as e:
+        logging.error(f"🌊 [get_water_temp] ❌ Ошибка запроса: {e}")
+        return None
+    except ValueError as e:  # JSON decode error
+        logging.error(f"🌊 [get_water_temp] ❌ Ошибка парсинга JSON: {e}")
+        return None
     except Exception as e:
-        logging.error(f"❌ Ошибка получения температуры воды: {e}")
+        logging.error(f"🌊 [get_water_temp] ❌ Неизвестная ошибка: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # ================== ФУНКЦИЯ ДЛЯ ПРЕОБРАЗОВАНИЯ ГРАДУСОВ В НАПРАВЛЕНИЕ ВЕТРА ==================
@@ -889,19 +941,3 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
