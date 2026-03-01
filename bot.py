@@ -169,6 +169,57 @@ async def get_weather_forecast(city: str, days: int) -> str:
         logging.error(f"Ошибка прогноза: {e}")
         return None
 
+
+# ================== ФУНКЦИЯ ДЛЯ ОПРЕДЕЛЕНИЯ ТЕМПЕРАТУРЫ ВОДЫ ==================
+
+async def get_water_temperature(city: str) -> float:
+    """
+    Получает температуру воды для прибрежных городов
+    Возвращает температуру в °C или None, если данные недоступны
+    """
+    # Координаты популярных курортов Крыма
+    crimean_beaches = {
+        'севастополь': {'lat': 44.6, 'lon': 33.53},
+        'симферополь': None,  # Не на море
+        'ялта': {'lat': 44.5, 'lon': 34.17},
+        'алушта': {'lat': 44.68, 'lon': 34.42},
+        'евпатория': {'lat': 45.19, 'lon': 33.37},
+        'феодосия': {'lat': 45.05, 'lon': 35.38},
+        'судак': {'lat': 44.85, 'lon': 34.97},
+        'саки': {'lat': 45.13, 'lon': 33.58},
+        'керчь': {'lat': 45.36, 'lon': 36.48},
+    }
+    
+    city_lower = city.lower()
+    if city_lower not in crimean_beaches or not crimean_beaches[city_lower]:
+        return None  # Город не на море
+    
+    coords = crimean_beaches[city_lower]
+    
+    try:
+        # Используем бесплатный API для морских данных
+        # Замените YOUR_WWO_KEY на ключ от worldweatheronline
+        WWO_KEY = os.getenv("WWO_API_KEY")  # Добавьте в переменные окружения
+        
+        url = f"http://api.worldweatheronline.com/premium/v1/marine.ashx"
+        params = {
+            'key': WWO_KEY,
+            'q': f"{coords['lat']},{coords['lon']}",
+            'format': 'json',
+            'tp': 1,  # часовой интервал
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        # Парсим температуру воды
+        water_temp = data['data']['weather'][0]['hourly'][0]['waterTemp_C']
+        return float(water_temp)
+        
+    except Exception as e:
+        logging.error(f"Ошибка получения температуры воды: {e}")
+        return None
+
 # ================== ФУНКЦИЯ ДЛЯ ПРЕОБРАЗОВАНИЯ ГРАДУСОВ В НАПРАВЛЕНИЕ ВЕТРА ==================
 
 def wind_direction_to_text(degrees: float) -> str:
@@ -805,6 +856,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
