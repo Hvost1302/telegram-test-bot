@@ -64,17 +64,29 @@ async def get_current_weather(city: str) -> str:
         temp = data['main']['temp']
         clothing_advice = get_clothing_advice(temp, weather_desc, wind_speed)
         
-        return (
+        # Получаем температуру воды (если город приморский)
+        water_temp = await get_water_temperature(city)
+        
+        # Формируем базовое сообщение
+        weather_text = (
             f"🌤 *Текущая погода в {data['name']}*\n\n"
             f"🌡 Температура: {temp:.1f}°C (ощущается как {data['main']['feels_like']:.1f}°C)\n"
             f"📝 Описание: {weather_desc.capitalize()}\n"
             f"💧 Влажность: {data['main']['humidity']}%\n"
             f"🌬 Ветер: {wind_speed} м/с, {wind_arrow} {wind_dir}\n"
             f"📊 Давление: {data['main']['pressure']} гПа\n\n"
-            f"👔 *Совет по одежде:*\n{clothing_advice}"
         )
+        
+        # Добавляем температуру воды, если она доступна
+        if water_temp:
+            weather_text += f"🌊 *Температура воды:* {water_temp:.1f}°C\n\n"
+        
+        weather_text += f"👔 *Совет по одежде:*\n{clothing_advice}"
+        
+        return weather_text
+        
     except Exception as e:
-        logging.error(f"Ошибка: {e}")
+        logging.error(f"Ошибка в get_current_weather: {e}")
         return None
 
 async def get_weather_forecast(city: str, days: int) -> str:
@@ -191,33 +203,54 @@ async def get_water_temperature(city: str) -> float:
     }
     
     city_lower = city.lower()
-    if city_lower not in crimean_beaches or not crimean_beaches[city_lower]:
-        return None  # Город не на море
+    logging.info(f"🔍 Проверка города для температуры воды: {city_lower}")
+    
+    if city_lower not in crimean_beaches:
+        logging.info(f"❌ Город {city_lower} не найден в списке приморских")
+        return None
     
     coords = crimean_beaches[city_lower]
+    if not coords:
+        logging.info(f"❌ Город {city_lower} не на море")
+        return None
+    
+    logging.info(f"✅ Город {city_lower} найден, координаты: {coords}")
     
     try:
-        # Используем бесплатный API для морских данных
-        # Замените YOUR_WWO_KEY на ключ от worldweatheronline
-        WWO_KEY = os.getenv("WWO_API_KEY")  # Добавьте в переменные окружения
+        WWO_KEY = os.getenv("WWO_API_KEY")
+        if not WWO_KEY:
+            logging.error("❌ WWO_API_KEY не задан в переменных окружения!")
+            return None
         
-        url = f"http://api.worldweatheronline.com/premium/v1/marine.ashx"
+        url = "http://api.worldweatheronline.com/premium/v1/marine.ashx"
         params = {
             'key': WWO_KEY,
             'q': f"{coords['lat']},{coords['lon']}",
             'format': 'json',
-            'tp': 1,  # часовой интервал
+            'tp': 1,
         }
         
+        logging.info(f"🌊 Запрос к API WorldWeatherOnline для {city_lower}")
         response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code != 200:
+            logging.error(f"❌ Ошибка HTTP: {response.status_code}")
+            return None
+        
         data = response.json()
         
-        # Парсим температуру воды
+        # Проверяем структуру ответа
+        if 'data' not in data or 'weather' not in data['data']:
+            logging.error(f"❌ Неожиданный формат ответа: {data}")
+            return None
+        
         water_temp = data['data']['weather'][0]['hourly'][0]['waterTemp_C']
+        logging.info(f"✅ Температура воды для {city_lower}: {water_temp}°C")
+        
         return float(water_temp)
         
     except Exception as e:
-        logging.error(f"Ошибка получения температуры воды: {e}")
+        logging.error(f"❌ Ошибка получения температуры воды: {e}")
         return None
 
 # ================== ФУНКЦИЯ ДЛЯ ПРЕОБРАЗОВАНИЯ ГРАДУСОВ В НАПРАВЛЕНИЕ ВЕТРА ==================
@@ -856,6 +889,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
