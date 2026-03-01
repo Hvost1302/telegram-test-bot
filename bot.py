@@ -43,7 +43,7 @@ class WeatherStates(StatesGroup):
 
 # ================== ФУНКЦИИ ПОГОДЫ ==================
 async def get_current_weather(city: str) -> str:
-    """Получает текущую погоду"""
+    """Получает текущую погоду с UV-индексом"""
     try:
         url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
         response = requests.get(url, timeout=10)
@@ -53,21 +53,27 @@ async def get_current_weather(city: str) -> str:
             logging.error(f"Ошибка API: {data}")
             return None
         
-        # Получаем направление ветра
+        # Получаем координаты для UV-индекса
+        lat = data['coord']['lat']
+        lon = data['coord']['lon']
+        
+        # Получаем UV-индекс
+        uv_data = await get_uv_index(lat, lon)
+        
+        # ... остальные данные (ветер, одежда и т.д.) ...
         wind_deg = data.get("wind", {}).get("deg", 0)
         wind_dir = wind_direction_to_text(wind_deg)
         wind_arrow = wind_direction_to_arrow(wind_deg)
         wind_speed = data["wind"]["speed"]
         
-        # Получаем совет по одежде
         weather_desc = data['weather'][0]['description']
         temp = data['main']['temp']
         clothing_advice = get_clothing_advice(temp, weather_desc, wind_speed)
         
-        # Получаем температуру воды (если город приморский)
+        # Получаем температуру воды
         water_temp = await get_water_temperature(city)
         
-        # Формируем базовое сообщение
+        # Формируем сообщение
         weather_text = (
             f"🌤 *Текущая погода в {data['name']}*\n\n"
             f"🌡 Температура: {temp:.1f}°C (ощущается как {data['main']['feels_like']:.1f}°C)\n"
@@ -77,9 +83,18 @@ async def get_current_weather(city: str) -> str:
             f"📊 Давление: {data['main']['pressure']} гПа\n\n"
         )
         
-        # Добавляем температуру воды, если она доступна
+        # Добавляем температуру воды
         if water_temp:
-            weather_text += f"🌊 *Температура воды:* {water_temp:.1f}°C\n\n"
+            weather_text += f"🌊 *Температура воды:* {water_temp:.1f}°C\n"
+        
+        # Добавляем UV-индекс
+        if uv_data:
+            weather_text += (
+                f"☀️ *UV-индекс:* {uv_data['value']} ({uv_data['level']})\n"
+                f"💡 *Совет:* {uv_data['advice']}\n\n"
+            )
+        else:
+            weather_text += "\n"
         
         weather_text += f"👔 *Совет по одежде:*\n{clothing_advice}"
         
@@ -179,6 +194,61 @@ async def get_weather_forecast(city: str, days: int) -> str:
 
     except Exception as e:
         logging.error(f"Ошибка прогноза: {e}")
+        return None
+
+async def get_uv_index(lat: float, lon: float) -> dict:
+    """
+    Получает UV-индекс по координатам
+    Возвращает словарь с значением и описанием или None
+    """
+    try:
+        # Используем UV API OpenWeatherMap
+        url = f"http://api.openweathermap.org/data/2.5/uvi"
+        params = {
+            'appid': WEATHER_API_KEY,
+            'lat': lat,
+            'lon': lon
+        }
+        
+        logging.info(f"☀️ [UV] Запрос UV-индекса для координат: {lat}, {lon}")
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code != 200:
+            logging.error(f"☀️ [UV] Ошибка HTTP: {response.status_code}")
+            return None
+        
+        data = response.json()
+        uv_value = data.get('value')
+        
+        if uv_value is None:
+            logging.error("☀️ [UV] Нет значения UV-индекса в ответе")
+            return None
+        
+        # Определяем уровень опасности по шкале ВОЗ [citation:5]
+        if uv_value <= 2:
+            level = "🟢 Низкий"
+            advice = "Можно находиться на солнце без защиты"
+        elif uv_value <= 5:
+            level = "🟡 Средний"
+            advice = "Используйте солнцезащитный крем, носите головной убор"
+        elif uv_value <= 7:
+            level = "🟠 Высокий"
+            advice = "Обязательно используйте защиту, избегайте полуденного солнца"
+        elif uv_value <= 10:
+            level = "🔴 Очень высокий"
+            advice = "Сведите пребывание на солнце к минимуму, необходима усиленная защита"
+        else:
+            level = "🟣 Экстремальный"
+            advice = "Избегайте выхода на улицу в середине дня!"
+        
+        return {
+            'value': uv_value,
+            'level': level,
+            'advice': advice
+        }
+        
+    except Exception as e:
+        logging.error(f"☀️ [UV] Ошибка: {e}")
         return None
 
 
@@ -923,4 +993,5 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
