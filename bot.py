@@ -1,3 +1,13 @@
+async def main():
+    # ПРИНУДИТЕЛЬНАЯ УСТАНОВКА WEBHOOK
+    print("🔄 Принудительная установка webhook...")
+    await bot.delete_webhook()
+    success = await bot.set_webhook(WEBHOOK_URL)
+    print(f"✅ Webhook установлен: {success}, URL: {WEBHOOK_URL}")
+    
+    app = web.Application()
+    # ... остальной код
+
 import asyncio
 import logging
 import os
@@ -329,3 +339,4 @@ if __name__ == "__main__":
         web.run_app(main(), host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
     except KeyboardInterrupt:
         logging.info("Бот остановлен")
+
