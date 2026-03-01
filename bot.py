@@ -21,7 +21,7 @@ WEBHOOK_PATH = "/webhook"
 RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 if not RENDER_URL:
-    RENDER_URL = "https://your-app.onrender.com"  # ЗАМЕНИТЕ НА ВАШ URL
+    RENDER_URL = "https://telegram-test-bot.onrender.com"  # ЗАМЕНИТЕ НА ВАШ URL
     logging.warning(f"⚠️ Использую запасной URL: {RENDER_URL}")
 
 WEBHOOK_URL = RENDER_URL + WEBHOOK_PATH
@@ -348,3 +348,4 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
