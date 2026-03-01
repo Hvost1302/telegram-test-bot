@@ -83,31 +83,31 @@ async def get_weather_forecast(city: str, days: int) -> str:
         geo_url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={WEATHER_API_KEY}"
         geo_response = requests.get(geo_url, timeout=10)
         geo_data = geo_response.json()
-        
+
         if geo_data.get("cod") != 200:
             return None
-        
+
         lat = geo_data["coord"]["lat"]
         lon = geo_data["coord"]["lon"]
         city_name = geo_data["name"]
-        
+
         forecast_url = f"http://api.openweathermap.org/data/2.5/forecast?lat={lat}&lon={lon}&appid={WEATHER_API_KEY}&units=metric&lang=ru"
         forecast_response = requests.get(forecast_url, timeout=10)
         forecast_data = forecast_response.json()
-        
+
         if forecast_data.get("cod") != "200":
             return None
-        
+
         # Группируем прогнозы по дням
         daily_data = {}
         today = datetime.now().date()
-        
+
         for item in forecast_data["list"]:
             date = datetime.fromtimestamp(item["dt"]).date()
-            
+
             if date == today:
                 continue
-                
+
             if date not in daily_data:
                 daily_data[date] = {
                     "temps": [],
@@ -115,65 +115,56 @@ async def get_weather_forecast(city: str, days: int) -> str:
                     "humidity": [],
                     "wind_speed": [],
                     "wind_deg": [],
-                    "pop": []  # Для вероятности осадков
+                    "pop": []
                 }
-            
-            # Заполняем данные
+
             daily_data[date]["temps"].append(item["main"]["temp"])
             daily_data[date]["descriptions"].append(item["weather"][0]["description"])
             daily_data[date]["humidity"].append(item["main"]["humidity"])
             daily_data[date]["wind_speed"].append(item["wind"]["speed"])
             daily_data[date]["wind_deg"].append(item["wind"].get("deg", 0))
-            daily_data[date]["pop"].append(item.get("pop", 0))  # вероятность осадков
-        
+            daily_data[date]["pop"].append(item.get("pop", 0))
+
         if not daily_data:
             return f"🌍 *Прогноз для {city_name}*\n\nНа ближайшие дни прогноз отсутствует."
-        
+
         # Формируем прогноз
         forecast_text = f"🌍 *Прогноз погоды для {city_name} на {days} дн.*\n\n"
         days_ru = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-        
+
         for date, data in list(sorted(daily_data.items()))[:days]:
             temps = data["temps"]
             temp_min = min(temps)
             temp_max = max(temps)
             avg_temp = sum(temps) / len(temps)
-    
+
             avg_humidity = sum(data["humidity"]) / len(data["humidity"])
             avg_wind_speed = sum(data["wind_speed"]) / len(data["wind_speed"])
             avg_wind_deg = sum(data["wind_deg"]) / len(data["wind_deg"])
-    
-            # Направление ветра
+
             wind_dir = wind_direction_to_text(avg_wind_deg)
             wind_arrow = wind_direction_to_arrow(avg_wind_deg)
-    
-            # Описание погоды
+
             description = max(set(data["descriptions"]), key=data["descriptions"].count).capitalize()
-    
-            # Вероятность осадков (средняя за день)
             avg_pop = sum(data["pop"]) / len(data["pop"]) * 100
-    
-            # Совет по одежде (используем среднюю температуру)
-            clothing_advice = get_clothing_advice(avg_temp, description.lower(), avg_wind_speed)
-    
+
             date_str = date.strftime("%d.%m")
             day_name = days_ru[date.weekday()]
-    
+
             forecast_text += f"📅 *{date_str} ({day_name})*\n"
             forecast_text += f"🌡 {temp_min:.0f}…{temp_max:.0f}°C (ср. {avg_temp:.1f}°C)\n"
             forecast_text += f"☁️ {description}\n"
             forecast_text += f"💧 Влажность: {avg_humidity:.0f}%\n"
             forecast_text += f"🌬 Ветер: {avg_wind_speed:.1f} м/с {wind_arrow} {wind_dir}\n"
-    
-    # Показываем вероятность осадков, только если она значимая (>10%)
-    if avg_pop > 10:
-        forecast_text += f"🌧 Вероятность осадков: {avg_pop:.0f}%\n"
-    
-    # Добавляем совет по одежде (компактно)
-    forecast_text += f"👔 {clothing_advice.split(chr(10))[0]}\n\n"  # берем только первую строку совета
-        
+
+            # ВАЖНО: Этот блок должен быть строго внутри цикла for
+            if avg_pop > 10:
+                forecast_text += f"🌧 Вероятность осадков: {avg_pop:.0f}%\n"
+
+            forecast_text += "\n"
+
         return forecast_text
-        
+
     except Exception as e:
         logging.error(f"Ошибка прогноза: {e}")
         return None
@@ -814,6 +805,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
