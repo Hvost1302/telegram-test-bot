@@ -3,7 +3,8 @@ import logging
 import os
 import requests
 import re
-from datetime import datetime
+import ephem
+from datetime import datetime, timezone
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
@@ -320,74 +321,48 @@ async def get_weather_forecast_fallback(city: str, days: int) -> str:
     pass
 
 
-async def get_moon_phase(date=None):
+async def get_moon_phase_calculated(date=None):
     """
-    Получает фазу луны через бесплатный API
-    Если date не указан, используется текущая дата
+    Рассчитывает фазу луны астрономическим методом (без API)
     """
     try:
         if date is None:
-            date = datetime.now().strftime("%Y-%m-%d")
+            date = datetime.now()
         
-        logging.info(f"🌙 [get_moon_phase] Запрос фазы луны на {date}")
+        # Создаем наблюдателя в Гринвиче
+        observer = ephem.Observer()
+        observer.date = date.strftime('%Y/%m/%d')
         
-        # Используем бесплатный API aladhan.com (не требует ключа)
-        url = f"http://api.aladhan.com/v1/gToH/{date}"
-        logging.info(f"🌙 [get_moon_phase] URL: {url}")
+        # Получаем луну
+        moon = ephem.Moon()
+        moon.compute(observer)
         
-        response = requests.get(url, timeout=10)
-        logging.info(f"🌙 [get_moon_phase] Статус ответа: {response.status_code}")
+        # ephem.moon_phase возвращает фазу от 0 до 1
+        # 0 - новолуние, 0.5 - полнолуние
+        phase = moon.moon_phase
         
-        if response.status_code != 200:
-            logging.error(f"🌙 [get_moon_phase] Ошибка HTTP: {response.status_code}")
-            return None
+        logging.info(f"🌙 [расчетная] Фаза луны: {phase:.3f}")
         
-        data = response.json()
-        logging.info(f"🌙 [get_moon_phase] Получен ответ, ключи: {list(data.keys()) if data else 'None'}")
-        
-        if not data or not data.get('data'):
-            logging.error("🌙 [get_moon_phase] Нет данных в ответе")
-            return None
-        
-        # Получаем день лунного месяца
-        hijri_data = data['data'].get('hijri', {})
-        lunar_day = int(hijri_data.get('day', 0))
-        lunar_month = hijri_data.get('month', {}).get('en', '')
-        
-        logging.info(f"🌙 [get_moon_phase] Лунный день: {lunar_day}, месяц: {lunar_month}")
-        
-        # Определяем фазу луны по дню лунного месяца
-        if lunar_day <= 1:
-            moon_phase = "🌑 Новолуние"
-        elif lunar_day <= 6:
-            moon_phase = "🌒 Растущий серп"
-        elif lunar_day <= 8:
-            moon_phase = "🌓 Первая четверть"
-        elif lunar_day <= 13:
-            moon_phase = "🌔 Растущая луна"
-        elif lunar_day <= 15:
-            moon_phase = "🌕 Полнолуние"
-        elif lunar_day <= 20:
-            moon_phase = "🌖 Убывающая луна"
-        elif lunar_day <= 22:
-            moon_phase = "🌗 Последняя четверть"
-        elif lunar_day <= 28:
-            moon_phase = "🌘 Убывающий серп"
+        if phase < 0.03 or phase > 0.97:
+            return "🌑 Новолуние"
+        elif phase < 0.22:
+            return "🌒 Растущий серп"
+        elif phase < 0.28:
+            return "🌓 Первая четверть"
+        elif phase < 0.47:
+            return "🌔 Растущая луна"
+        elif phase < 0.53:
+            return "🌕 Полнолуние"
+        elif phase < 0.72:
+            return "🌖 Убывающая луна"
+        elif phase < 0.78:
+            return "🌗 Последняя четверть"
         else:
-            moon_phase = "🌑 Новолуние"
-        
-        logging.info(f"🌙 [get_moon_phase] Определена фаза: {moon_phase}")
-        return moon_phase
+            return "🌘 Убывающий серп"
             
-    except requests.exceptions.RequestException as e:
-        logging.error(f"🌙 [get_moon_phase] Ошибка запроса: {e}")
-        return None
     except Exception as e:
-        logging.error(f"🌙 [get_moon_phase] Неизвестная ошибка: {e}")
-        import traceback
-        traceback.print_exc()
+        logging.error(f"🌙 [расчетная] Ошибка: {e}")
         return None
-
 async def get_uv_index(lat: float, lon: float) -> dict:
     """
     Получает UV-индекс по координатам
@@ -1226,6 +1201,7 @@ if __name__ == "__main__":
         logging.info("Бот остановлен пользователем")
     finally:
         logging.info("Завершение работы")
+
 
 
 
